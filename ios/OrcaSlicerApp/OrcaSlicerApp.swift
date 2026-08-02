@@ -4,6 +4,9 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @main
 struct OrcaSlicerApp: App {
@@ -15,22 +18,33 @@ struct OrcaSlicerApp: App {
     }
 }
 
-// MARK: - Theme (desktop Orca dark + orange)
+// MARK: - Theme from official desktop StateColor.cpp (dark mode)
+// ORCA brand: #009688 → dark #00675b | hover #26A69A → #008172
+// Secondary: #FF6F00 → #D15B00 | window bg #2D2D31 | panel #36363C / #242428
 
 private enum OrcaTheme {
-    static let bg = Color(red: 0.10, green: 0.11, blue: 0.13)
-    static let panel = Color(red: 0.15, green: 0.16, blue: 0.19)
-    static let elevated = Color(red: 0.20, green: 0.21, blue: 0.25)
-    static let field = Color(red: 0.12, green: 0.13, blue: 0.16)
-    static let accent = Color(red: 1.0, green: 0.55, blue: 0.15)
-    static let accentDim = Color(red: 0.82, green: 0.40, blue: 0.08)
-    static let bed = Color(red: 0.24, green: 0.26, blue: 0.30)
-    static let grid = Color.white.opacity(0.16)
-    static let muted = Color.white.opacity(0.65)
-    static let faint = Color.white.opacity(0.40)
-    static let border = Color.white.opacity(0.10)
-    static let success = Color(red: 0.40, green: 0.88, blue: 0.50)
-    static let danger = Color(red: 1.0, green: 0.35, blue: 0.35)
+    /// Window background — StateColor dark map for #FFFFFF
+    static let bg = Color(red: 0x2D / 255.0, green: 0x2D / 255.0, blue: 0x31 / 255.0)
+    /// Sidebar / titlebar — #36363C
+    static let panel = Color(red: 0x36 / 255.0, green: 0x36 / 255.0, blue: 0x3C / 255.0)
+    /// Elevated controls — #3E3E45 button bg
+    static let elevated = Color(red: 0x3E / 255.0, green: 0x3E / 255.0, blue: 0x45 / 255.0)
+    /// Fields / inputs — slightly darker
+    static let field = Color(red: 0x2D / 255.0, green: 0x2D / 255.0, blue: 0x31 / 255.0)
+    /// Primary ORCA brand (light #009688 → dark-mode accent #00675b, use mid-teal for buttons)
+    static let accent = Color(red: 0x00 / 255.0, green: 0x96 / 255.0, blue: 0x88 / 255.0)
+    static let accentHover = Color(red: 0x26 / 255.0, green: 0xA6 / 255.0, blue: 0x9A / 255.0)
+    static let accentDim = Color(red: 0x00 / 255.0, green: 0x67 / 255.0, blue: 0x5B / 255.0)
+    /// Secondary brand orange from StateColor
+    static let secondary = Color(red: 0xFF / 255.0, green: 0x6F / 255.0, blue: 0x00 / 255.0)
+    static let bed = Color(red: 0x33 / 255.0, green: 0x33 / 255.0, blue: 0x37 / 255.0)
+    static let grid = Color.white.opacity(0.14)
+    static let muted = Color(red: 0xB3 / 255.0, green: 0xB3 / 255.0, blue: 0xB5 / 255.0)
+    static let faint = Color(red: 0x81 / 255.0, green: 0x81 / 255.0, blue: 0x83 / 255.0)
+    static let border = Color(red: 0x4A / 255.0, green: 0x4A / 255.0, blue: 0x51 / 255.0)
+    static let success = Color(red: 0x00 / 255.0, green: 0x96 / 255.0, blue: 0x88 / 255.0)
+    static let danger = Color(red: 0xBB / 255.0, green: 0x2A / 255.0, blue: 0x3A / 255.0)
+    static let text = Color(red: 0xEF / 255.0, green: 0xEF / 255.0, blue: 0xF0 / 255.0)
 }
 
 // MARK: - Root
@@ -83,7 +97,7 @@ struct OrcaRootView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("OrcaSlicer")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(OrcaTheme.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 HStack(spacing: 6) {
@@ -105,7 +119,7 @@ struct OrcaRootView: View {
             } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(OrcaTheme.text)
                     .frame(width: 44, height: 44)
                     .background(OrcaTheme.elevated)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -161,7 +175,7 @@ struct OrcaRootView: View {
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
                             .fill(
                                 LinearGradient(
-                                    colors: [OrcaTheme.accent, OrcaTheme.accentDim],
+                                    colors: [OrcaTheme.accentHover, OrcaTheme.accent],
                                     startPoint: .top,
                                     endPoint: .bottom
                                 )
@@ -196,7 +210,7 @@ struct OrcaRootView: View {
                 if let name = engine.modelName {
                     Text(name)
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(OrcaTheme.text)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .padding(.horizontal, 14)
@@ -244,7 +258,7 @@ struct OrcaRootView: View {
                     if isSlicing {
                         ProgressView()
                             .controlSize(.regular)
-                            .tint(.black)
+                            .tint(.white)
                     } else {
                         Image(systemName: "square.3.layers.3d.down.right")
                             .font(.system(size: 17, weight: .bold))
@@ -256,8 +270,8 @@ struct OrcaRootView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 54)
-                .background(engine.hasModel && !isSlicing ? OrcaTheme.accent : OrcaTheme.accent.opacity(0.38))
-                .foregroundStyle(.black)
+                .background(engine.hasModel && !isSlicing ? OrcaTheme.accent : OrcaTheme.accentDim.opacity(0.55))
+                .foregroundStyle(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
@@ -301,7 +315,7 @@ struct OrcaRootView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 56)
             .background(OrcaTheme.elevated)
-            .foregroundStyle(.white)
+            .foregroundStyle(OrcaTheme.text)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -368,7 +382,7 @@ struct OrcaRootView: View {
                 .foregroundStyle(OrcaTheme.muted)
             Spacer()
             Text(value)
-                .foregroundStyle(.white)
+                .foregroundStyle(OrcaTheme.text)
                 .multilineTextAlignment(.trailing)
         }
         .listRowBackground(OrcaTheme.panel)
@@ -385,7 +399,7 @@ struct OrcaRootView: View {
                     .autocorrectionDisabled()
                     .keyboardType(.decimalPad)
                     .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(OrcaTheme.text)
                     .padding(10)
                     .background(OrcaTheme.field)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -457,22 +471,30 @@ private struct BedGridView: View {
     }
 }
 
+/// Official logo from resources/images (Assets.xcassets OrcaSlicerLogo + loose PNG fallback)
 private struct OrcaLogoMark: View {
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [OrcaTheme.accent, OrcaTheme.accentDim],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            Image(systemName: "fish.fill")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(.black.opacity(0.88))
-                .rotationEffect(.degrees(-28))
+        Group {
+            #if canImport(UIKit)
+            if let ui = UIImage(named: "OrcaSlicerLogo") {
+                Image(uiImage: ui)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            } else {
+                Image(systemName: "seal.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(OrcaTheme.accent)
+            }
+            #else
+            Image("OrcaSlicerLogo")
+                .resizable()
+                .scaledToFit()
+            #endif
         }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityLabel("OrcaSlicer")
     }
 }
 
