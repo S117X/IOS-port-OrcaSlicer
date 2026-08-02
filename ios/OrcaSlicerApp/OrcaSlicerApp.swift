@@ -560,6 +560,7 @@ struct OrcaRootView: View {
     @State private var topShells = "3"
     @State private var bottomShells = "3"
     @State private var supportOn = false
+    @State private var ironingOn = false
     @State private var brimType = "no_brim"
     @State private var outerWallSpeed = "60"
     @State private var sparseSpeed = "100"
@@ -664,6 +665,44 @@ struct OrcaRootView: View {
                     Text("Filament / temps")
                 } footer: {
                     Text("Options map to DynamicPrintConfig keys used by official G-code export.")
+                }
+                Section {
+                    Button {
+                        engine.setOption("wall_generator", value: "arachne")
+                        status = engine.lastMessage
+                    } label: {
+                        labeled("wall_generator", "Set Arachne")
+                    }
+                    Button {
+                        engine.setOption("wall_generator", value: "classic")
+                        status = engine.lastMessage
+                    } label: {
+                        labeled("wall_generator", "Set classic")
+                    }
+                    Button {
+                        engine.setOption("seam_position", value: "aligned")
+                        status = engine.lastMessage
+                    } label: {
+                        labeled("seam_position", "aligned")
+                    }
+                    Button {
+                        engine.setOption("seam_position", value: "nearest")
+                        status = engine.lastMessage
+                    } label: {
+                        labeled("seam_position", "nearest")
+                    }
+                    Toggle(isOn: $ironingOn) {
+                        Text("ironing")
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    }
+                    .tint(OrcaTheme.accent)
+                    .listRowBackground(OrcaTheme.panel)
+                    .onChange(of: ironingOn) { on in
+                        engine.setOption("ironing", value: on ? "1" : "0")
+                        status = engine.lastMessage
+                    }
+                } header: {
+                    Text("Walls / seam / ironing")
                 }
                 Section("Engine") {
                     Text(engine.version)
