@@ -98,31 +98,37 @@ Success = unit test on device: **slice a known STL → G-code matches desktop he
 
 ---
 
-## Status (in tree now)
+## Status (in tree now — Aug 2026)
 
 | Item | Location | Notes |
 |---|---|---|
-| C ABI header | `src/ios/orca_slice_c_api.h` | Stable mobile API |
-| C ABI impl | `src/ios/orca_slice_c_api.cpp` | **Calls real** `Model::read_from_file`, `Print::apply/process/export_gcode` |
-| CMake target | `src/ios/CMakeLists.txt` → `orca_ios_api` | Enabled by `ORCA_IOS_API=ON` or `CMAKE_SYSTEM_NAME=iOS` |
-| Root CMake iOS mode | `CMakeLists.txt` | Forces `SLIC3R_GUI=OFF` when `ORCA_IOS` / iOS |
-| SwiftUI host | `ios/OrcaSlicerApp/*` | Import STL/3MF, set options, slice, share G-code |
-| Build script | `scripts/build_ios.sh` | Configures Xcode iOS build when deps exist |
+| C ABI | `src/ios/orca_slice_c_api.{h,cpp}` | load/config/mesh export/bounds/transform/arrange/slice/progress |
+| CMake target | `src/ios/CMakeLists.txt` → `orca_ios_api` | `ORCA_IOS_API=ON` |
+| macOS headless engine | `build-macos-headless-arm64` | Sample cube → real G-code proven |
+| **iOS Simulator deps + engine** | `deps/build-ios-iphonesimulator-arm64`, `build-ios-iphonesimulator-arm64` | `liborca_engine.a` linked in Xcode |
+| SwiftUI host | `ios/OrcaSlicerApp/*` | Prepare / Preview / Device, SceneKit orbit, real mesh |
+| SceneKit plate | `PlateSceneView.swift` | Mesh from `orca_session_export_mesh`, G-code paths + layer Z |
+| Process sheet | Process | layer/walls/infill/support/brim/speeds/temps via DynamicPrintConfig |
+| Device | Moonraker | `server.info` connect + multipart G-code upload |
+| Branch | `ios-port` on [S117X/IOS-port-OrcaSlicer](https://github.com/S117X/IOS-port-OrcaSlicer) | Pushed continuously |
 
-### Still required for a running device slice
+### Still required
 
-1. Cross-compile **deps** (Boost, TBB, Eigen, OpenSSL, CURL, ZLIB, PNG, Cereal, NLopt, OpenVDB or stubs, …) for `iphoneos` / `iphonesimulator`.  
-2. `cmake -DORCA_IOS=ON …` + `cmake --build --target orca_ios_api`.  
-3. Link `liborca_ios_api.a` + `libslic3r.a` + deps into the Xcode app; set `ORCA_LINKED=1` SWIFT flag.  
-4. Bundle subset of `resources/` (profiles, calib) into the app.
+1. **Physical device** (`iphoneos`) deps + engine (not built yet — only Simulator arm64).  
+2. Fuller profile inheritance (official JSON inherits chains).  
+3. Metal/libvgcode-class toolpath preview (current path is SceneKit polylines).  
+4. Full desktop GUI parity (years of wx rebind — not the mobile product path).  
+5. AGPL compliance strategy before any store distribution.
 
 ## Immediate next engineering steps
 
 1. ~~Create branch `ios-port`~~ done.  
-2. ~~C API wrapping libslic3r~~ done.  
-3. ~~Swift host shell~~ done.  
-4. Build iOS dep prefix (largest remaining block of work).  
-5. Link into Xcode and golden-test G-code vs desktop CLI.
+2. ~~C API wrapping libslic3r~~ done (expanded).  
+3. ~~Swift host shell~~ done + SceneKit plate.  
+4. ~~iOS Simulator deps + link ORCA_LINKED~~ done.  
+5. ~~Real mesh + orbit + G-code preview~~ done.  
+6. Build **iphoneos** dep prefix + device install.  
+7. Richer G-code feature-type colors / multi-plate.
 
 ---
 
