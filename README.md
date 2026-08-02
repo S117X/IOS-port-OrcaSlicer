@@ -13,13 +13,13 @@ It is engineering work to run the **official `libslic3r` engine** on Apple platf
 
 ## Simulator (actual device screenshot)
 
-iPhone Simulator — prepare shell with **official libslic3r linked** (`ORCA_LINKED`):
+iPhone Simulator — prepare view with **real mesh from official libslic3r** (`ORCA_LINKED` + SceneKit orbit):
 
 <p align="center">
-  <img src="docs/images/ios-simulator-prepare.png?raw=1" alt="OrcaSlicer iOS port — iPhone Simulator (official teal + logo, libslic3r linked)" width="320" />
+  <img src="docs/images/ios-simulator-prepare.png?raw=1" alt="OrcaSlicer iOS port — iPhone Simulator real mesh + plate orbit" width="320" />
 </p>
 
-*Live Simulator capture (Aug 2026): official Orca logo + brand teal (`#009688`), prepare plate, Open / Sample / Process / Slice plate. Engine: “Official libslic3r linked.”*
+*Live Simulator capture (Aug 2026): sample cube mesh exported via `orca_session_export_mesh` (20×20×20 mm), drag-to-orbit / pinch-to-zoom SceneKit plate, official logo + teal (`#009688`), Prepare / Preview / Device tabs, Slice plate → G-code path preview.*
 
 ---
 
@@ -43,12 +43,15 @@ Official libslic3r (C++ — every engine .cpp stays upstream code)
 
 | Piece | Status |
 |---|---|
-| C API `src/ios/orca_slice_c_api.{h,cpp}` | Done |
+| C API `src/ios/orca_slice_c_api.{h,cpp}` | Done (+ mesh export, bounds, center, options) |
 | macOS headless `libslic3r` + slice CLI | Done — sample cube → real Orca G-code |
 | Combined `liborca_engine.a` (Mac + Simulator) | Done |
 | Xcode app `ORCA_LINKED` on **My Mac** | Done |
 | Xcode app `ORCA_LINKED` on **iOS Simulator** | Done |
-| SwiftUI prepare-style shell | In progress (not desktop GUI parity) |
+| SceneKit plate: real mesh + orbit/pan/zoom | Done |
+| G-code path preview after slice | Done (polyline toolpaths) |
+| Bundled process profile JSON | Done (minimal `process_0.20mm_Standard`) |
+| SwiftUI Prepare / Preview / Device + Process sheet | In progress (not desktop GUI parity) |
 | Physical device (`iphoneos`) deps/engine | Not yet |
 | App Store release | **Not ready** — AGPL-3.0 + incomplete UI |
 
@@ -60,15 +63,20 @@ More detail: [`FULL_PORT_REALITY.md`](FULL_PORT_REALITY.md) · plan notes: [`POR
 
 ```
 ios/                         SwiftUI host + Xcode project
-  OrcaSlicerApp/             App UI + OrcaEngine.swift bridge
+  OrcaSlicerApp/
+    OrcaSlicerApp.swift      Prepare / Preview / Device shell
+    OrcaEngine.swift         Bridge to orca_ios_api
+    PlateSceneView.swift     SceneKit bed + mesh + G-code paths
   sample_cube_20mm.stl       Bundled test model
 src/ios/                     C ABI over libslic3r (+ CLI for host tests)
+  orca_slice_c_api.{h,cpp}   load / config / mesh / slice / G-code
 scripts/
   build_macos_headless_api.sh
   build_ios_deps.sh
   build_ios_engine_after_deps.sh
   bundle_engine_libs.sh
 cmake/ios.toolchain.cmake
+docs/images/                 Simulator screenshots for this port
 ```
 
 Upstream tree (`src/libslic3r`, `resources/`, `deps/`, …) is still the official OrcaSlicer source.

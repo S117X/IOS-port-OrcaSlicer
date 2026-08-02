@@ -21,7 +21,13 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Utils.hpp"
+
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+#include <cmath>
 
 using namespace Slic3r;
 
@@ -96,6 +102,11 @@ int orca_session_load_model(orca_session_t *s, const char *path)
         // Merge any config embedded in 3MF into session config
         ensure_default_config(s);
         s->config.apply(file_config);
+        // Place objects on bed for print/preview
+        for (ModelObject *obj : s->model.objects) {
+            if (obj)
+                obj->ensure_on_bed();
+        }
         s->has_model = true;
         return 0;
     } catch (const std::exception &ex) {
@@ -201,6 +212,182 @@ int orca_session_slice_to_gcode(orca_session_t *s, const char *gcode_out_path)
     } catch (...) {
         s->set_error("slice: unknown error");
         return -5;
+    }
+}
+
+int orca_session_model_bounds(
+    orca_session_t *s,
+    float *min_x, float *min_y, float *min_z,
+    float *max_x, float *max_y, float *max_z)
+{
+    if (!s || !s->has_model)
+        return -1;
+    try {
+        BoundingBoxf3 bb = s->model.bounding_box_exact();
+        if (min_x) *min_x = float(bb.min.x());
+        if (min_y) *min_y = float(bb.min.y());
+        if (min_z) *min_z = float(bb.min.z());
+        if (max_x) *max_x = float(bb.max.x());
+        if (max_y) *max_y = float(bb.max.y());
+        if (max_z) *max_z = float(bb.max.z());
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("bounds: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("bounds: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_export_mesh(
+    orca_session_t *s,
+    float **out_positions,
+    size_t *out_vertex_count,
+    uint32_t **out_indices,
+    size_t *out_index_count)
+{
+    if (!s || !out_positions || !out_vertex_count || !out_indices || !out_index_count)
+        return -1;
+    *out_positions = nullptr;
+    *out_indices = nullptr;
+    *out_vertex_count = 0;
+    *out_index_count = 0;
+    if (!s->has_model) {
+        s->set_error("No model loaded");
+        return -2;
+    }
+    try {
+        // Combined mesh of all objects/instances (world / assembly space)
+        TriangleMesh mesh = s->model.mesh();
+        const indexed_triangle_set &its = mesh.its;
+        if (its.vertices.empty() || its.indices.empty()) {
+            s->set_error("Mesh empty");
+            return -3;
+        }
+
+        const size_t nv = its.vertices.size();
+        const size_t nf = its.indices.size();
+        auto *pos = static_cast<float *>(std::malloc(nv * 3 * sizeof(float)));
+        auto *idx = static_cast<uint32_t *>(std::malloc(nf * 3 * sizeof(uint32_t)));
+        if (!pos || !idx) {
+            std::free(pos);
+            std::free(idx);
+            s->set_error("out of memory");
+            return -4;
+        }
+        for (size_t i = 0; i < nv; ++i) {
+            pos[i * 3 + 0] = its.vertices[i].x();
+            pos[i * 3 + 1] = its.vertices[i].y();
+            pos[i * 3 + 2] = its.vertices[i].z();
+        }
+        for (size_t i = 0; i < nf; ++i) {
+            idx[i * 3 + 0] = uint32_t(its.indices[i][0]);
+            idx[i * 3 + 1] = uint32_t(its.indices[i][1]);
+            idx[i * 3 + 2] = uint32_t(its.indices[i][2]);
+        }
+        *out_positions = pos;
+        *out_vertex_count = nv;
+        *out_indices = idx;
+        *out_index_count = nf * 3;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("export_mesh: ") + ex.what());
+        return -5;
+    } catch (...) {
+        s->set_error("export_mesh: unknown error");
+        return -5;
+    }
+}
+
+void orca_free(void *p)
+{
+    std::free(p);
+}
+
+int orca_session_object_count(orca_session_t *s)
+{
+    if (!s || !s->has_model)
+        return 0;
+    return int(s->model.objects.size());
+}
+
+const char *orca_session_object_name(orca_session_t *s, int index)
+{
+    if (!s || !s->has_model || index < 0 || index >= int(s->model.objects.size()))
+        return nullptr;
+    ModelObject *obj = s->model.objects[size_t(index)];
+    if (!obj)
+        return nullptr;
+    // lifetime: session-owned string field
+    return obj->name.c_str();
+}
+
+int orca_session_get_option(
+    orca_session_t *s, const char *key, char *buf, size_t buf_len)
+{
+    if (!s || !key || !buf || buf_len == 0)
+        return -1;
+    buf[0] = '\0';
+    try {
+        ensure_default_config(s);
+        const ConfigOption *opt = s->config.option(key);
+        if (!opt) {
+            s->set_error(std::string("unknown option: ") + key);
+            return -2;
+        }
+        std::string val = opt->serialize();
+        if (val.size() >= buf_len) {
+            s->set_error("buffer too small");
+            return -3;
+        }
+        std::memcpy(buf, val.c_str(), val.size() + 1);
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("get_option: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("get_option: unknown error");
+        return -4;
+    }
+}
+
+int orca_session_center_on_bed(orca_session_t *s)
+{
+    if (!s || !s->has_model)
+        return -1;
+    try {
+        ensure_default_config(s);
+        // printable_area is a Points polygon; compute center from config if present
+        BoundingBoxf3 bb = s->model.bounding_box_exact();
+        Vec3d center = bb.center();
+        double bed_cx = 110.0, bed_cy = 110.0;
+        if (const ConfigOptionPoints *pa = s->config.option<ConfigOptionPoints>("printable_area")) {
+            if (!pa->values.empty()) {
+                BoundingBoxf bedbb;
+                for (const Vec2d &p : pa->values)
+                    bedbb.merge(Vec2d(p.x(), p.y()));
+                bed_cx = (bedbb.min.x() + bedbb.max.x()) * 0.5;
+                bed_cy = (bedbb.min.y() + bedbb.max.y()) * 0.5;
+            }
+        }
+        Vec3d shift(bed_cx - center.x(), bed_cy - center.y(), 0.0);
+        for (ModelObject *obj : s->model.objects) {
+            if (!obj) continue;
+            for (ModelInstance *inst : obj->instances) {
+                if (!inst) continue;
+                inst->set_offset(inst->get_offset() + shift);
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+        }
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("center_on_bed: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("center_on_bed: unknown error");
+        return -2;
     }
 }
 

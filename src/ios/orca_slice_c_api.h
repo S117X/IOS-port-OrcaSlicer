@@ -51,6 +51,51 @@ ORCA_API int orca_session_set_option(orca_session_t *s, const char *key, const c
  */
 ORCA_API int orca_session_slice_to_gcode(orca_session_t *s, const char *gcode_out_path);
 
+/**
+ * Axis-aligned bounding box of loaded model (mm).
+ * @return 0 on success
+ */
+ORCA_API int orca_session_model_bounds(
+    orca_session_t *s,
+    float *min_x, float *min_y, float *min_z,
+    float *max_x, float *max_y, float *max_z);
+
+/**
+ * Export triangle mesh for 3D preview (object-space mm).
+ * Caller must free *out_positions and *out_indices with orca_free().
+ * positions: xyz float triples (vertex_count * 3)
+ * indices: triangle vertex indices (index_count, multiple of 3)
+ * @return 0 on success
+ */
+ORCA_API int orca_session_export_mesh(
+    orca_session_t *s,
+    float **out_positions,
+    size_t *out_vertex_count,
+    uint32_t **out_indices,
+    size_t *out_index_count);
+
+/** Free memory returned by orca_session_export_mesh. */
+ORCA_API void orca_free(void *p);
+
+/** Number of model objects currently loaded. */
+ORCA_API int orca_session_object_count(orca_session_t *s);
+
+/**
+ * Name of model object at index (0-based).
+ * @return pointer valid until next API call on this session; NULL if OOB
+ */
+ORCA_API const char *orca_session_object_name(orca_session_t *s, int index);
+
+/**
+ * Read a DynamicPrintConfig option as string into buf.
+ * @return 0 on success
+ */
+ORCA_API int orca_session_get_option(
+    orca_session_t *s, const char *key, char *buf, size_t buf_len);
+
+/** Center all objects on the printable bed (XY). */
+ORCA_API int orca_session_center_on_bed(orca_session_t *s);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);

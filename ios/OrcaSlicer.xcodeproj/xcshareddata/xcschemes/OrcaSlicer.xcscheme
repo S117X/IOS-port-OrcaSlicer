@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "798F30CAE56545E38DFD5927"
+               BlueprintIdentifier = "FD91D26745E247CAB8CE0AB9"
                BuildableName = "OrcaSlicer.app"
                BlueprintName = "OrcaSlicer"
                ReferencedContainer = "container:OrcaSlicer.xcodeproj">
@@ -43,7 +43,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "798F30CAE56545E38DFD5927"
+            BlueprintIdentifier = "FD91D26745E247CAB8CE0AB9"
             BuildableName = "OrcaSlicer.app"
             BlueprintName = "OrcaSlicer"
             ReferencedContainer = "container:OrcaSlicer.xcodeproj">

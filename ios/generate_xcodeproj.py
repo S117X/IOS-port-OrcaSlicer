@@ -21,7 +21,8 @@ def uid():
 
 IDs = {k: uid() for k in [
     "project", "target", "sources", "resources", "frameworks", "product",
-    "swift_app", "swift_engine", "sample_stl", "logo", "assets",
+    "swift_app", "swift_engine", "swift_plate", "sample_stl", "logo", "assets",
+    "process_profile", "scenekit_fw",
     "config_list_proj", "config_list_tgt",
     "debug_proj", "release_proj", "debug_tgt", "release_tgt",
     "group_main", "group_app", "group_products",
@@ -34,12 +35,14 @@ hdr_path = "$(SRCROOT)/../src/ios"
 mac_ld = (
     "-lorca_engine -lc++ -lz -liconv -lexpat "
     "-framework Foundation -framework ModelIO -framework IOKit "
-    "-framework CoreFoundation -framework Security -framework SystemConfiguration"
+    "-framework CoreFoundation -framework Security -framework SystemConfiguration "
+    "-framework SceneKit -framework UIKit"
 )
 ios_ld = (
     "-lorca_engine -lc++ -lz -liconv -lexpat "
     "-framework Foundation -framework ModelIO "
-    "-framework Security -framework SystemConfiguration"
+    "-framework Security -framework SystemConfiguration "
+    "-framework SceneKit -framework UIKit"
 )
 
 
@@ -137,9 +140,11 @@ pbx = f'''// !$*UTF8*$!
 /* Begin PBXBuildFile section */
 		{IDs["swift_app"]} /* OrcaSlicerApp.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OrcaSlicerApp.swift */; }};
 		{IDs["swift_engine"]} /* OrcaEngine.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000002 /* OrcaEngine.swift */; }};
+		{IDs["swift_plate"]} /* PlateSceneView.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PlateSceneView.swift */; }};
 		{IDs["sample_stl"]} /* sample_cube_20mm.stl in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000005 /* sample_cube_20mm.stl */; }};
 		{IDs["logo"]} /* OrcaSlicerLogo.png in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000006 /* OrcaSlicerLogo.png */; }};
 		{IDs["assets"]} /* Assets.xcassets in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; }};
+		{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; }};
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -150,6 +155,8 @@ pbx = f'''// !$*UTF8*$!
 		A10000000000000000000005 /* sample_cube_20mm.stl */ = {{isa = PBXFileReference; lastKnownFileType = text; name = sample_cube_20mm.stl; path = sample_cube_20mm.stl; sourceTree = "<group>"; }};
 		A10000000000000000000006 /* OrcaSlicerLogo.png */ = {{isa = PBXFileReference; lastKnownFileType = image.png; path = OrcaSlicerLogo.png; sourceTree = "<group>"; }};
 		A10000000000000000000007 /* Assets.xcassets */ = {{isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; }};
+		A10000000000000000000008 /* PlateSceneView.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateSceneView.swift; sourceTree = "<group>"; }};
+		A10000000000000000000009 /* process_0.20mm_Standard.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.20mm_Standard.json; sourceTree = "<group>"; }};
 		{IDs["product"]} /* OrcaSlicer.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; }};
 /* End PBXFileReference section */
 
@@ -168,10 +175,12 @@ pbx = f'''// !$*UTF8*$!
 			children = (
 				A10000000000000000000001 /* OrcaSlicerApp.swift */,
 				A10000000000000000000002 /* OrcaEngine.swift */,
+				A10000000000000000000008 /* PlateSceneView.swift */,
 				A10000000000000000000003 /* Info.plist */,
 				A10000000000000000000004 /* Bridging-Header.h */,
 				A10000000000000000000006 /* OrcaSlicerLogo.png */,
 				A10000000000000000000007 /* Assets.xcassets */,
+				A10000000000000000000009 /* process_0.20mm_Standard.json */,
 			);
 			path = OrcaSlicerApp;
 			sourceTree = "<group>";
@@ -240,6 +249,7 @@ pbx = f'''// !$*UTF8*$!
 				{IDs["sample_stl"]} /* sample_cube_20mm.stl in Resources */,
 				{IDs["logo"]} /* OrcaSlicerLogo.png in Resources */,
 				{IDs["assets"]} /* Assets.xcassets in Resources */,
+				{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
@@ -262,6 +272,7 @@ pbx = f'''// !$*UTF8*$!
 			files = (
 				{IDs["swift_app"]} /* OrcaSlicerApp.swift in Sources */,
 				{IDs["swift_engine"]} /* OrcaEngine.swift in Sources */,
+				{IDs["swift_plate"]} /* PlateSceneView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
