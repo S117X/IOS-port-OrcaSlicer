@@ -28,6 +28,8 @@
 #include <cstring>
 #include <vector>
 #include <cmath>
+#include <functional>
+#include <algorithm>
 
 using namespace Slic3r;
 
@@ -387,6 +389,145 @@ int orca_session_center_on_bed(orca_session_t *s)
         return -2;
     } catch (...) {
         s->set_error("center_on_bed: unknown error");
+        return -2;
+    }
+}
+
+static void for_each_object(orca_session_t *s, int index, const std::function<void(ModelObject *)> &fn)
+{
+    if (index < 0) {
+        for (ModelObject *obj : s->model.objects)
+            if (obj) fn(obj);
+    } else if (index < int(s->model.objects.size())) {
+        if (ModelObject *obj = s->model.objects[size_t(index)])
+            fn(obj);
+    }
+}
+
+int orca_session_translate_object(
+    orca_session_t *s, int index, float dx, float dy, float dz)
+{
+    if (!s || !s->has_model)
+        return -1;
+    try {
+        const Vec3d delta(dx, dy, dz);
+        for_each_object(s, index, [&](ModelObject *obj) {
+            for (ModelInstance *inst : obj->instances) {
+                if (!inst) continue;
+                inst->set_offset(inst->get_offset() + delta);
+            }
+            obj->invalidate_bounding_box();
+        });
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("translate: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("translate: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_rotate_object_z(orca_session_t *s, int index, float degrees)
+{
+    if (!s || !s->has_model)
+        return -1;
+    try {
+        const double rad = double(degrees) * M_PI / 180.0;
+        for_each_object(s, index, [&](ModelObject *obj) {
+            for (ModelInstance *inst : obj->instances) {
+                if (!inst) continue;
+                // rotate around Z (bed normal)
+                inst->set_rotation(Z, inst->get_rotation(Z) + rad);
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+        });
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("rotate: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("rotate: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_scale_object(orca_session_t *s, int index, float factor)
+{
+    if (!s || !s->has_model || factor <= 0.f)
+        return -1;
+    try {
+        for_each_object(s, index, [&](ModelObject *obj) {
+            for (ModelInstance *inst : obj->instances) {
+                if (!inst) continue;
+                Vec3d sc = inst->get_scaling_factor();
+                inst->set_scaling_factor(sc * double(factor));
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+        });
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("scale: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("scale: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_arrange(orca_session_t *s)
+{
+    if (!s || !s->has_model)
+        return -1;
+    try {
+        // Simple row arrange with 10mm gap (full libnest2d arrange later)
+        double x = 10.0, y = 10.0, row_h = 0.0;
+        double bed_w = 220.0, bed_h = 220.0;
+        if (const ConfigOptionPoints *pa = s->config.option<ConfigOptionPoints>("printable_area")) {
+            if (!pa->values.empty()) {
+                BoundingBoxf bedbb;
+                for (const Vec2d &p : pa->values)
+                    bedbb.merge(Vec2d(p.x(), p.y()));
+                bed_w = bedbb.max.x() - bedbb.min.x();
+                bed_h = bedbb.max.y() - bedbb.min.y();
+                x = bedbb.min.x() + 10.0;
+                y = bedbb.min.y() + 10.0;
+            }
+        }
+        const double gap = 10.0;
+        for (ModelObject *obj : s->model.objects) {
+            if (!obj || obj->instances.empty()) continue;
+            BoundingBoxf3 bb = obj->instance_bounding_box(0);
+            double w = bb.size().x();
+            double h = bb.size().y();
+            if (x + w > bed_w - 5.0) {
+                x = 10.0;
+                y += row_h + gap;
+                row_h = 0.0;
+            }
+            if (y + h > bed_h - 5.0) {
+                // overflow: still place, engine may warn on slice
+            }
+            Vec3d cur = bb.center();
+            Vec3d target(x + w * 0.5, y + h * 0.5, cur.z());
+            Vec3d delta = target - cur;
+            for (ModelInstance *inst : obj->instances) {
+                if (!inst) continue;
+                inst->set_offset(inst->get_offset() + delta);
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+            x += w + gap;
+            row_h = std::max(row_h, h);
+        }
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("arrange: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("arrange: unknown error");
         return -2;
     }
 }

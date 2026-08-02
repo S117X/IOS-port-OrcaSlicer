@@ -327,12 +327,17 @@ struct MeshGeometry {
 // MARK: - G-code path preview (simple extrusion moves)
 
 struct GCodePathGeometry {
-    var points: [SCNVector3] // polyline
+    var points: [SCNVector3] // polyline (slic3r Z-up)
+    var zMin: Float = 0
+    var zMax: Float = 0
 
-    static func parse(url: URL, maxPoints: Int = 80000) -> GCodePathGeometry? {
+    /// Full parse of extrusion moves; use `filtered(maxZ:)` for layer scrubbing.
+    static func parse(url: URL, maxPoints: Int = 120_000) -> GCodePathGeometry? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         var x: Float = 0, y: Float = 0, z: Float = 0
         var pts: [SCNVector3] = []
+        var zMin: Float = .greatestFiniteMagnitude
+        var zMax: Float = -.greatestFiniteMagnitude
         pts.reserveCapacity(min(maxPoints, 4096))
         for line in text.split(whereSeparator: \.isNewline) {
             if pts.count >= maxPoints { break }
@@ -348,14 +353,25 @@ struct GCodePathGeometry {
                     if let e = Float(token.dropFirst()), e > 0 { hasE = true }
                 }
             }
-            // Keep extrusion moves + short travels for sparse path
-            if hasE || abs(nz - z) > 0.01 {
-                // Slic3r Z-up → SceneKit after bed rotation of model uses (x,y,z) with node rotation
+            if hasE {
+                pts.append(SCNVector3(nx, ny, nz))
+                zMin = min(zMin, nz)
+                zMax = max(zMax, nz)
+            } else if abs(nz - z) > 0.01 {
+                // layer change marker — keep sparse Z hops so segments don't jump
                 pts.append(SCNVector3(nx, ny, nz))
             }
             x = nx; y = ny; z = nz
         }
-        return pts.count > 2 ? GCodePathGeometry(points: pts) : nil
+        guard pts.count > 2 else { return nil }
+        if zMin > zMax { zMin = 0; zMax = 0.2 }
+        return GCodePathGeometry(points: pts, zMin: zMin, zMax: zMax)
+    }
+
+    /// Keep only points with Z <= maxZ (layer slider).
+    func filtered(maxZ: Float) -> GCodePathGeometry {
+        let f = points.filter { $0.z <= maxZ + 0.001 }
+        return GCodePathGeometry(points: f, zMin: zMin, zMax: maxZ)
     }
 
     func makeNode(color: UIColor) -> SCNNode {

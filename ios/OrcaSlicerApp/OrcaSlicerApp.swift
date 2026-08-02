@@ -84,6 +84,9 @@ struct OrcaRootView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+                    if mainTab == .preview, engine.gcodeGeometry != nil {
+                        layerScrubber
+                    }
                     controlsPanel(bottomInset: bottomPad)
                 }
             }
@@ -225,6 +228,10 @@ struct OrcaRootView: View {
                 }
             }
 
+            if engine.hasModel && mainTab == .prepare {
+                plateToolsRow
+            }
+
             Button(action: sliceNow) {
                 HStack(spacing: 10) {
                     if isSlicing {
@@ -298,6 +305,71 @@ struct OrcaRootView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    private var plateToolsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                toolChip("Center", "scope") { engine.centerOnBed(); status = engine.lastMessage }
+                toolChip("Arrange", "square.grid.2x2") { engine.arrange(); status = engine.lastMessage }
+                toolChip("↺ 45°", "rotate.left") { engine.rotateZ(degrees: -45); status = engine.lastMessage }
+                toolChip("↻ 45°", "rotate.right") { engine.rotateZ(degrees: 45); status = engine.lastMessage }
+                toolChip("×0.5", "minus.magnifyingglass") { engine.scale(factor: 0.5); status = engine.lastMessage }
+                toolChip("×2", "plus.magnifyingglass") { engine.scale(factor: 2); status = engine.lastMessage }
+                toolChip("←", "arrow.left") { engine.translate(dx: -10, dy: 0); status = engine.lastMessage }
+                toolChip("→", "arrow.right") { engine.translate(dx: 10, dy: 0); status = engine.lastMessage }
+                toolChip("↑", "arrow.up") { engine.translate(dx: 0, dy: 10); status = engine.lastMessage }
+                toolChip("↓", "arrow.down") { engine.translate(dx: 0, dy: -10); status = engine.lastMessage }
+            }
+        }
+    }
+
+    private func toolChip(_ title: String, _ systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(OrcaTheme.elevated)
+            .foregroundStyle(OrcaTheme.text)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var layerScrubber: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Layer Z")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OrcaTheme.muted)
+                Spacer()
+                Text(String(format: "%.2f / %.2f mm", engine.previewMaxZ, engine.gcodeZMax))
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.accent)
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(engine.previewMaxZ) },
+                    set: { v in
+                        engine.previewMaxZ = Float(v)
+                        engine.applyPreviewLayer()
+                    }
+                ),
+                in: Double(engine.gcodeZMin)...Double(max(engine.gcodeZMax, engine.gcodeZMin + 0.05))
+            )
+            .tint(OrcaTheme.accent)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(OrcaTheme.panel)
+        .overlay(alignment: .top) {
+            Rectangle().fill(OrcaTheme.border).frame(height: 1)
+        }
     }
 
     @State private var topShells = "3"

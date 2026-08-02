@@ -15,9 +15,14 @@ final class OrcaEngine: ObservableObject {
     @Published var lastMessage = ""
     @Published var mesh: MeshGeometry?
     @Published var gcodePathNode: SCNNode?
+    @Published var gcodeGeometry: GCodePathGeometry?
     @Published var objectCount: Int = 0
     @Published var boundsText: String = ""
     @Published var bedSize: SIMD2<Float> = SIMD2(220, 220)
+    /// Layer scrubber: max Z shown in Preview (mm)
+    @Published var previewMaxZ: Float = 100
+    @Published var gcodeZMin: Float = 0
+    @Published var gcodeZMax: Float = 20
 
     private var session: OpaquePointer?
 
@@ -174,6 +179,7 @@ final class OrcaEngine: ObservableObject {
         refreshBounds()
         gcodeURL = nil
         gcodePathNode = nil
+        gcodeGeometry = nil
         lastMessage = "Loaded \(url.lastPathComponent) · \(objectCount) object(s) · mesh ready"
         return lastMessage
         #else
@@ -181,6 +187,20 @@ final class OrcaEngine: ObservableObject {
         hasModel = false
         lastMessage = "Engine not linked"
         return lastMessage
+        #endif
+    }
+
+    /// Rebuild G-code SceneKit node from geometry filtered by previewMaxZ
+    func applyPreviewLayer() {
+        guard let geo = gcodeGeometry else {
+            gcodePathNode = nil
+            return
+        }
+        let filtered = geo.filtered(maxZ: previewMaxZ)
+        #if canImport(UIKit)
+        gcodePathNode = filtered.makeNode(
+            color: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
+        )
         #endif
     }
 
@@ -249,6 +269,82 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
+    /// index -1 = all objects
+    func translate(dx: Float, dy: Float, dz: Float = 0, index: Int = -1) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let rc = orca_session_translate_object(s, Int32(index), dx, dy, dz)
+        if rc == 0 {
+            refreshMesh(); refreshBounds()
+            lastMessage = String(format: "Moved Δ(%.1f, %.1f, %.1f) mm", dx, dy, dz)
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "translate failed"
+        }
+        #endif
+    }
+
+    func rotateZ(degrees: Float, index: Int = -1) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let rc = orca_session_rotate_object_z(s, Int32(index), degrees)
+        if rc == 0 {
+            refreshMesh(); refreshBounds()
+            lastMessage = String(format: "Rotated Z %.0f°", degrees)
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "rotate failed"
+        }
+        #endif
+    }
+
+    func scale(factor: Float, index: Int = -1) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let rc = orca_session_scale_object(s, Int32(index), factor)
+        if rc == 0 {
+            refreshMesh(); refreshBounds()
+            lastMessage = String(format: "Scaled ×%.2f", factor)
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "scale failed"
+        }
+        #endif
+    }
+
+    func centerOnBed() {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        if orca_session_center_on_bed(s) == 0 {
+            refreshMesh(); refreshBounds()
+            lastMessage = "Centered on bed"
+        }
+        #endif
+    }
+
+    func arrange() {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        if orca_session_arrange(s) == 0 {
+            refreshMesh(); refreshBounds()
+            lastMessage = "Arranged objects on plate"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "arrange failed"
+        }
+        #endif
+    }
+
+    func getOption(_ key: String) -> String? {
+        #if ORCA_LINKED
+        guard let s = session else { return nil }
+        var buf = [CChar](repeating: 0, count: 512)
+        let rc = key.withCString { k in
+            orca_session_get_option(s, k, &buf, buf.count)
+        }
+        guard rc == 0 else { return nil }
+        return String(cString: buf)
+        #else
+        return nil
+        #endif
+    }
+
     func slice() async -> String {
         #if ORCA_LINKED
         guard let s = session else { return "No session" }
@@ -264,9 +360,11 @@ final class OrcaEngine: ObservableObject {
         await MainActor.run {
             self.gcodeURL = out
             if let path = GCodePathGeometry.parse(url: out) {
-                self.gcodePathNode = path.makeNode(
-                    color: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
-                )
+                self.gcodeGeometry = path
+                self.gcodeZMin = path.zMin
+                self.gcodeZMax = max(path.zMax, path.zMin + 0.2)
+                self.previewMaxZ = self.gcodeZMax
+                self.applyPreviewLayer()
             }
         }
         return "G-code written: \(out.lastPathComponent) (Print::export_gcode)"

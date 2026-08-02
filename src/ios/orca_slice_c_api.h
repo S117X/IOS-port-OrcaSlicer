@@ -96,6 +96,30 @@ ORCA_API int orca_session_get_option(
 /** Center all objects on the printable bed (XY). */
 ORCA_API int orca_session_center_on_bed(orca_session_t *s);
 
+/**
+ * Translate object by delta mm (world XY/Z). index = -1 applies to all objects.
+ * @return 0 on success
+ */
+ORCA_API int orca_session_translate_object(
+    orca_session_t *s, int index, float dx, float dy, float dz);
+
+/**
+ * Rotate object around Z by degrees (plate yaw). index = -1 → all.
+ */
+ORCA_API int orca_session_rotate_object_z(
+    orca_session_t *s, int index, float degrees);
+
+/**
+ * Uniform scale object about its center. index = -1 → all.
+ */
+ORCA_API int orca_session_scale_object(
+    orca_session_t *s, int index, float factor);
+
+/**
+ * Auto-arrange objects on bed (simple grid, not full nest2d).
+ */
+ORCA_API int orca_session_arrange(orca_session_t *s);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);
