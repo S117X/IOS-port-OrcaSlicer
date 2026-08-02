@@ -11,6 +11,16 @@ It is engineering work to run the **official `libslic3r` engine** on Apple platf
 | **This fork** | [S117X/IOS-port-OrcaSlicer](https://github.com/S117X/IOS-port-OrcaSlicer) |
 | **Working branch** | [`ios-port`](https://github.com/S117X/IOS-port-OrcaSlicer/tree/ios-port) |
 
+## Simulator (actual device screenshot)
+
+iPhone Simulator — prepare shell with **official libslic3r linked** (`ORCA_LINKED`):
+
+<p align="center">
+  <img src="docs/images/ios-simulator-prepare.png" alt="OrcaSlicer iOS port running in iPhone Simulator" width="320" />
+</p>
+
+*Captured from the running Simulator app (`com.orcaslicer.ios`). Dark prepare view: build plate, Open / Sample / Process, Slice plate. Engine status: “Official libslic3r linked.”*
+
 ---
 
 ## What this port is
