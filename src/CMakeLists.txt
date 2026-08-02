@@ -13,6 +13,13 @@ find_package(libnoise REQUIRED)
 
 add_subdirectory(libslic3r)
 
+# iOS / headless mobile C API (wraps libslic3r — official engine)
+option(ORCA_IOS_API "Build orca_ios_api C wrapper for iOS / mobile hosts" OFF)
+if (ORCA_IOS_API OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    message(STATUS "Building OrcaSlicer iOS C API (orca_ios_api)")
+    add_subdirectory(ios)
+endif ()
+
 if (SLIC3R_GUI)
     add_subdirectory(glad)
     # imgui, imguizmo, and hidapi are now included from deps_src

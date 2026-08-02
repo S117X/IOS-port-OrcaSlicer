@@ -59,6 +59,18 @@ if (APPLE)
     message(STATUS "CMAKE_OSX_DEPLOYMENT_TARGET: ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif ()
 
+# iOS port: force headless core (no wxWidgets GUI)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ORCA_IOS)
+    set(ORCA_IOS ON CACHE BOOL "OrcaSlicer iOS port build" FORCE)
+    set(SLIC3R_GUI OFF CACHE BOOL "GUI disabled on iOS" FORCE)
+    set(ORCA_IOS_API ON CACHE BOOL "Build iOS C API" FORCE)
+    set(SLIC3R_DESKTOP_INTEGRATION OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ORCA_TOOLS OFF CACHE BOOL "" FORCE)
+    set(ORCA_BUILD_PYTHON_STUBGEN_MODULE OFF CACHE BOOL "" FORCE)
+    message(STATUS "OrcaSlicer iOS mode: SLIC3R_GUI=OFF ORCA_IOS_API=ON")
+endif ()
+
 project(OrcaSlicer)
 
 # Backward compatibility for old CMake versions
