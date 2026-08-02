@@ -14,6 +14,17 @@ if (IN_GIT_REPO)
     set(OpenCV_DIRECTORY_FLAG --directory ${BINARY_DIR_REL}/dep_OpenCV-prefix/src/dep_OpenCV)
 endif ()
 
+# iOS: bundled libpng hits missing macOS-only headers (fp.h). Use system/dep PNG instead.
+set(_opencv_png_args -DBUILD_PNG=ON)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ORCA_IOS_DEPS)
+    set(_opencv_png_args
+        -DBUILD_PNG=OFF
+        -DWITH_PNG=ON
+        -DPNG_PNG_INCLUDE_DIR=${DESTDIR}/include
+        -DPNG_LIBRARY=${DESTDIR}/lib/libpng.a
+    )
+endif ()
+
 orcaslicer_add_cmake_project(OpenCV
     ${_options}
     URL https://github.com/opencv/opencv/archive/refs/tags/4.6.0.tar.gz
@@ -32,7 +43,7 @@ orcaslicer_add_cmake_project(OpenCV
        -DBUILD_opencv_apps=OFF
        -DBUILD_opencv_java=OFF
        -DBUILD_OPENEXR=OFF
-       -DBUILD_PNG=ON
+       ${_opencv_png_args}
        -DBUILD_TBB=OFF
        -DBUILD_WEBP=OFF
        -DBUILD_ZLIB=OFF
