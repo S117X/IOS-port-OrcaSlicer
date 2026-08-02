@@ -327,21 +327,41 @@ struct MeshGeometry {
 // MARK: - G-code path preview (simple extrusion moves)
 
 struct GCodePathGeometry {
-    var points: [SCNVector3] // polyline (slic3r Z-up)
+    struct Segment {
+        var points: [SCNVector3]
+        var feature: String // Orca ;TYPE: value
+    }
+    var segments: [Segment]
     var zMin: Float = 0
     var zMax: Float = 0
 
-    /// Full parse of extrusion moves; use `filtered(maxZ:)` for layer scrubbing.
+    /// Full parse of extrusion moves; honors Orca `;TYPE:` feature comments.
     static func parse(url: URL, maxPoints: Int = 120_000) -> GCodePathGeometry? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         var x: Float = 0, y: Float = 0, z: Float = 0
-        var pts: [SCNVector3] = []
+        var feature = "Unknown"
+        var segs: [Segment] = []
+        var cur: [SCNVector3] = []
         var zMin: Float = .greatestFiniteMagnitude
         var zMax: Float = -.greatestFiniteMagnitude
-        pts.reserveCapacity(min(maxPoints, 4096))
+        var total = 0
+
+        func flush() {
+            if cur.count > 1 {
+                segs.append(Segment(points: cur, feature: feature))
+            }
+            cur = []
+        }
+
         for line in text.split(whereSeparator: \.isNewline) {
-            if pts.count >= maxPoints { break }
+            if total >= maxPoints { break }
             let s = line.trimmingCharacters(in: .whitespaces)
+            if s.hasPrefix(";TYPE:") || s.hasPrefix(";TYPE :") {
+                flush()
+                let raw = s.dropFirst(6).trimmingCharacters(in: .whitespaces)
+                feature = String(raw)
+                continue
+            }
             guard s.hasPrefix("G0") || s.hasPrefix("G1") || s.hasPrefix("g0") || s.hasPrefix("g1") else { continue }
             var nx = x, ny = y, nz = z
             var hasE = false
@@ -354,49 +374,92 @@ struct GCodePathGeometry {
                 }
             }
             if hasE {
-                pts.append(SCNVector3(nx, ny, nz))
+                let p = SCNVector3(nx, ny, nz)
+                if cur.isEmpty { cur.append(SCNVector3(x, y, z)) }
+                cur.append(p)
                 zMin = min(zMin, nz)
                 zMax = max(zMax, nz)
+                total += 1
             } else if abs(nz - z) > 0.01 {
-                // layer change marker — keep sparse Z hops so segments don't jump
-                pts.append(SCNVector3(nx, ny, nz))
+                flush()
             }
             x = nx; y = ny; z = nz
         }
-        guard pts.count > 2 else { return nil }
+        flush()
+        guard !segs.isEmpty else { return nil }
         if zMin > zMax { zMin = 0; zMax = 0.2 }
-        return GCodePathGeometry(points: pts, zMin: zMin, zMax: zMax)
+        return GCodePathGeometry(segments: segs, zMin: zMin, zMax: zMax)
     }
 
     /// Keep only points with Z <= maxZ (layer slider).
     func filtered(maxZ: Float) -> GCodePathGeometry {
-        let f = points.filter { $0.z <= maxZ + 0.001 }
-        return GCodePathGeometry(points: f, zMin: zMin, zMax: maxZ)
+        var out: [Segment] = []
+        for seg in segments {
+            let pts = seg.points.filter { $0.z <= maxZ + 0.001 }
+            if pts.count > 1 {
+                out.append(Segment(points: pts, feature: seg.feature))
+            }
+        }
+        return GCodePathGeometry(segments: out, zMin: zMin, zMax: maxZ)
+    }
+
+    static func color(for feature: String) -> UIColor {
+        let f = feature.lowercased()
+        // Colors inspired by Orca/Bambu feature palette (approx)
+        if f.contains("outer wall") || f.contains("outer_wall") {
+            return UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 1) // orange
+        }
+        if f.contains("inner wall") || f.contains("inner_wall") {
+            return UIColor(red: 0.95, green: 0.85, blue: 0.20, alpha: 1) // yellow
+        }
+        if f.contains("top") {
+            return UIColor(red: 0.55, green: 0.35, blue: 0.85, alpha: 1) // purple
+        }
+        if f.contains("bottom") {
+            return UIColor(red: 0.30, green: 0.55, blue: 0.95, alpha: 1) // blue
+        }
+        if f.contains("sparse") || f.contains("internal") || f.contains("infill") {
+            return UIColor(red: 0.25, green: 0.75, blue: 0.55, alpha: 1) // green
+        }
+        if f.contains("support") {
+            return UIColor(red: 0.55, green: 0.55, blue: 0.60, alpha: 1)
+        }
+        if f.contains("skirt") || f.contains("brim") {
+            return UIColor(red: 0.70, green: 0.70, blue: 0.75, alpha: 1)
+        }
+        if f.contains("bridge") {
+            return UIColor(red: 0.20, green: 0.75, blue: 0.85, alpha: 1)
+        }
+        // default Orca teal
+        return UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
     }
 
     func makeNode(color: UIColor) -> SCNNode {
-        guard points.count > 1 else { return SCNNode() }
-        let src = SCNGeometrySource(vertices: points)
-        var indices: [Int32] = []
-        for i in 0..<(points.count - 1) {
-            indices.append(Int32(i))
-            indices.append(Int32(i + 1))
+        let root = SCNNode()
+        root.name = "gcode"
+        for seg in segments {
+            guard seg.points.count > 1 else { continue }
+            let src = SCNGeometrySource(vertices: seg.points)
+            var indices: [Int32] = []
+            for i in 0..<(seg.points.count - 1) {
+                indices.append(Int32(i))
+                indices.append(Int32(i + 1))
+            }
+            let data = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+            let elem = SCNGeometryElement(
+                data: data,
+                primitiveType: .line,
+                primitiveCount: indices.count / 2,
+                bytesPerIndex: MemoryLayout<Int32>.size
+            )
+            let geo = SCNGeometry(sources: [src], elements: [elem])
+            let mat = SCNMaterial()
+            mat.diffuse.contents = Self.color(for: seg.feature)
+            mat.lightingModel = .constant
+            geo.materials = [mat]
+            root.addChildNode(SCNNode(geometry: geo))
         }
-        let data = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-        let elem = SCNGeometryElement(
-            data: data,
-            primitiveType: .line,
-            primitiveCount: indices.count / 2,
-            bytesPerIndex: MemoryLayout<Int32>.size
-        )
-        let geo = SCNGeometry(sources: [src], elements: [elem])
-        let mat = SCNMaterial()
-        mat.diffuse.contents = color
-        mat.lightingModel = .constant
-        geo.materials = [mat]
-        let node = SCNNode(geometry: geo)
-        node.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
-        node.name = "gcode"
-        return node
+        root.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
+        return root
     }
 }
