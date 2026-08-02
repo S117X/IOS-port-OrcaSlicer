@@ -45,6 +45,15 @@ ORCA_API int orca_session_load_config(orca_session_t *s, const char *config_path
 ORCA_API int orca_session_set_option(orca_session_t *s, const char *key, const char *value);
 
 /**
+ * Optional progress callback during slice (percent 0–100, message may be null).
+ * Called from the slicing thread; keep work light / hop to main for UI.
+ */
+typedef void (*orca_progress_fn)(int percent, const char *message, void *user);
+
+ORCA_API void orca_session_set_progress_callback(
+    orca_session_t *s, orca_progress_fn fn, void *user);
+
+/**
  * Slice and write G-code.
  * Implementation: Print::apply + Print::process + Print::export_gcode
  * @return 0 on success

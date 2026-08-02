@@ -417,14 +417,18 @@ struct OrcaRootView: View {
                 HStack(spacing: 10) {
                     if isSlicing {
                         ProgressView().controlSize(.regular).tint(.white)
+                        Text("\(engine.slicePercent)% · \(engine.slicePhase.isEmpty ? "Slicing…" : engine.slicePhase)")
+                            .font(.system(size: 15, weight: .bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                     } else {
                         Image(systemName: "square.3.layers.3d.down.right")
                             .font(.system(size: 17, weight: .bold))
+                        Text("Slice plate")
+                            .font(.system(size: 17, weight: .bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
-                    Text(isSlicing ? "Slicing with libslic3r…" : "Slice plate")
-                        .font(.system(size: 17, weight: .bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 54)

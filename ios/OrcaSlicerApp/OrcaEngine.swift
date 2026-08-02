@@ -345,11 +345,38 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
+    @Published var slicePercent: Int = 0
+    @Published var slicePhase: String = ""
+
     func slice() async -> String {
         #if ORCA_LINKED
         guard let s = session else { return "No session" }
         let out = FileManager.default.temporaryDirectory
             .appendingPathComponent("plate_1.gcode")
+        await MainActor.run {
+            self.slicePercent = 0
+            self.slicePhase = "Starting"
+        }
+        // Progress bridge: C callback → main-thread published fields
+        final class ProgressBox: @unchecked Sendable {
+            weak var engine: OrcaEngine?
+            init(_ e: OrcaEngine) { engine = e }
+        }
+        let box = ProgressBox(self)
+        let boxPtr = Unmanaged.passRetained(box).toOpaque()
+        orca_session_set_progress_callback(s, { pct, msg, user in
+            guard let user else { return }
+            let b = Unmanaged<ProgressBox>.fromOpaque(user).takeUnretainedValue()
+            let phase = msg.map { String(cString: $0) } ?? ""
+            DispatchQueue.main.async {
+                b.engine?.slicePercent = Int(pct)
+                b.engine?.slicePhase = phase
+            }
+        }, boxPtr)
+        defer {
+            orca_session_set_progress_callback(s, nil, nil)
+            Unmanaged<ProgressBox>.fromOpaque(boxPtr).release()
+        }
         let rc = await Task.detached {
             out.path.withCString { orca_session_slice_to_gcode(s, $0) }
         }.value
@@ -359,6 +386,8 @@ final class OrcaEngine: ObservableObject {
         }
         await MainActor.run {
             self.gcodeURL = out
+            self.slicePercent = 100
+            self.slicePhase = "Done"
             if let path = GCodePathGeometry.parse(url: out) {
                 self.gcodeGeometry = path
                 self.gcodeZMin = path.zMin

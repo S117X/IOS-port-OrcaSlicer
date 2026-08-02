@@ -40,9 +40,15 @@ struct orca_session {
     DynamicPrintConfig config;
     bool        has_model{false};
     bool        has_config{false};
+    orca_progress_fn progress_fn{nullptr};
+    void *      progress_user{nullptr};
 
     void set_error(const std::string &e) { last_error = e; }
     void clear_error() { last_error.clear(); }
+    void report_progress(int pct, const char *msg) {
+        if (progress_fn)
+            progress_fn(pct, msg, progress_user);
+    }
 };
 
 static void ensure_default_config(orca_session *s)
@@ -177,6 +183,15 @@ int orca_session_set_option(orca_session_t *s, const char *key, const char *valu
     }
 }
 
+void orca_session_set_progress_callback(
+    orca_session_t *s, orca_progress_fn fn, void *user)
+{
+    if (!s)
+        return;
+    s->progress_fn = fn;
+    s->progress_user = user;
+}
+
 int orca_session_slice_to_gcode(orca_session_t *s, const char *gcode_out_path)
 {
     if (!s || !gcode_out_path)
@@ -188,6 +203,7 @@ int orca_session_slice_to_gcode(orca_session_t *s, const char *gcode_out_path)
     }
     try {
         ensure_default_config(s);
+        s->report_progress(5, "Applying config");
 
         Print print;
         // Center / place objects if needed — use model as loaded
@@ -199,14 +215,17 @@ int orca_session_slice_to_gcode(orca_session_t *s, const char *gcode_out_path)
         }
 
         print.set_status_silent();
+        s->report_progress(15, "Slicing (Print::process)");
         print.process();
 
+        s->report_progress(85, "Exporting G-code");
         GCodeProcessorResult result;
         std::string out = print.export_gcode(std::string(gcode_out_path), &result, nullptr);
         if (out.empty()) {
             s->set_error("export_gcode returned empty path");
             return -4;
         }
+        s->report_progress(100, "Done");
         return 0;
     } catch (const std::exception &ex) {
         s->set_error(std::string("slice: ") + ex.what());
