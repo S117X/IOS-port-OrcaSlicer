@@ -2,115 +2,130 @@
 """Generate Xcode project for OrcaSlicer iOS/macOS host (official libslic3r via C ABI)."""
 from pathlib import Path
 import uuid
-import os
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
-APP = ROOT / "OrcaSlicerApp"
 PROJ = ROOT / "OrcaSlicer.xcodeproj"
 PROJ.mkdir(exist_ok=True)
 
-# Prefer combined engine bundle (macOS arm64 headless build)
 ENGINE_MAC = REPO / "build-macos-headless-arm64" / "engine_bundle" / "lib"
 ENGINE_IOS = REPO / "build-ios-iphonesimulator-arm64" / "engine_bundle" / "lib"
-HEADER = REPO / "src" / "ios"
 
 has_mac_engine = (ENGINE_MAC / "liborca_engine.a").is_file()
 has_ios_engine = (ENGINE_IOS / "liborca_engine.a").is_file()
 
+
 def uid():
     return uuid.uuid4().hex[:24].upper()
 
-IDs = {
-    "project": uid(),
-    "target": uid(),
-    "sources": uid(),
-    "resources": uid(),
-    "frameworks": uid(),
-    "product": uid(),
-    "swift_app": uid(),
-    "swift_engine": uid(),
-    "sample_stl": uid(),
-    "config_list_proj": uid(),
-    "config_list_tgt": uid(),
-    "debug_proj": uid(),
-    "release_proj": uid(),
-    "debug_tgt": uid(),
-    "release_tgt": uid(),
-    "group_main": uid(),
-    "group_app": uid(),
-    "group_products": uid(),
-}
 
-# Relative from ios/ project dir
+IDs = {k: uid() for k in [
+    "project", "target", "sources", "resources", "frameworks", "product",
+    "swift_app", "swift_engine", "sample_stl",
+    "config_list_proj", "config_list_tgt",
+    "debug_proj", "release_proj", "debug_tgt", "release_tgt",
+    "group_main", "group_app", "group_products",
+]}
+
 mac_lib_path = "$(SRCROOT)/../build-macos-headless-arm64/engine_bundle/lib"
 ios_lib_path = "$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib"
 hdr_path = "$(SRCROOT)/../src/ios"
 
-# When mac engine exists, enable ORCA_LINKED for macOS SDK builds.
-# iOS SDK enables when iOS engine exists.
-common_linked_flags = (
-    "-force_load $(ENGINE_LIB_DIR)/liborca_engine.a "
-    "-lc++ -lz -liconv "
+mac_ld = (
+    "-lorca_engine -lc++ -lz -liconv -lexpat "
     "-framework Foundation -framework ModelIO -framework IOKit "
-    "-framework CoreFoundation -framework Security -framework SystemConfiguration -lexpat -lpng -lexpat -lpng"
+    "-framework CoreFoundation -framework Security -framework SystemConfiguration"
+)
+ios_ld = (
+    "-lorca_engine -lc++ -lz -liconv -lexpat "
+    "-framework Foundation -framework ModelIO "
+    "-framework Security -framework SystemConfiguration"
 )
 
-def tgt_settings(name, linked_default):
-    # ENGINE_LIB_DIR is set per-SDK via conditional; use mac path as default for multiplatform My Mac
-    eng = mac_lib_path if has_mac_engine else ios_lib_path
-    conditions = []
-    if has_mac_engine or has_ios_engine:
-        conditions.append("ORCA_LINKED")
-    cond_str = " ".join(conditions) if conditions else ""
-    ldflags = common_linked_flags if (has_mac_engine or has_ios_engine) else ""
-    lib_search = f'"{eng}"' if (has_mac_engine or has_ios_engine) else '""'
-    return f'''
-			isa = XCBuildConfiguration;
-			buildSettings = {{
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				ENABLE_PREVIEWS = YES;
-				ENGINE_LIB_DIR = "{eng}";
-				GENERATE_INFOPLIST_FILE = NO;
-				HEADER_SEARCH_PATHS = (
-					"{hdr_path}",
-					"$(inherited)",
-				);
-				INFOPLIST_FILE = OrcaSlicerApp/Info.plist;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				LIBRARY_SEARCH_PATHS = (
-					{lib_search},
-					"$(inherited)",
-				);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 2.5.0;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					{('"' + ldflags + '"') if ldflags else '""'},
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.orcaslicer.ios;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
-				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "{cond_str}";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "OrcaSlicerApp/Bridging-Header.h";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,6";
-			}};
-			name = {name};
-'''
+
+def tgt_settings(name: str) -> str:
+    # Base: no engine. SDK-conditional ORCA_LINKED + link flags when bundles exist.
+    lines = [
+        "\t\t\tisa = XCBuildConfiguration;",
+        "\t\t\tbuildSettings = {",
+        "\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;",
+        "\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;",
+        "\t\t\t\tCLANG_ENABLE_MODULES = YES;",
+        "\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;",
+        "\t\t\t\tCODE_SIGN_STYLE = Automatic;",
+        "\t\t\t\tCURRENT_PROJECT_VERSION = 1;",
+        '\t\t\t\tDEVELOPMENT_TEAM = "";',
+        "\t\t\t\tENABLE_PREVIEWS = YES;",
+        "\t\t\t\tGENERATE_INFOPLIST_FILE = NO;",
+        "\t\t\t\tHEADER_SEARCH_PATHS = (",
+        f'\t\t\t\t\t"{hdr_path}",',
+        '\t\t\t\t\t"$(inherited)",',
+        "\t\t\t\t);",
+        "\t\t\t\tINFOPLIST_FILE = OrcaSlicerApp/Info.plist;",
+        "\t\t\t\tINFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;",
+        "\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 16.0;",
+        "\t\t\t\tLD_RUNPATH_SEARCH_PATHS = (",
+        '\t\t\t\t\t"$(inherited)",',
+        '\t\t\t\t\t"@executable_path/Frameworks",',
+        "\t\t\t\t);",
+        "\t\t\t\tLIBRARY_SEARCH_PATHS = (",
+        '\t\t\t\t\t"$(inherited)",',
+        "\t\t\t\t);",
+        "\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;",
+        "\t\t\t\tMARKETING_VERSION = 2.5.0;",
+        "\t\t\t\tOTHER_LDFLAGS = (",
+        '\t\t\t\t\t"$(inherited)",',
+        "\t\t\t\t);",
+        "\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.orcaslicer.ios;",
+        '\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";',
+        '\t\t\t\tSUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";',
+        "\t\t\t\tSUPPORTS_MACCATALYST = NO;",
+        '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";',
+        "\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;",
+        '\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = "OrcaSlicerApp/Bridging-Header.h";',
+        "\t\t\t\tSWIFT_VERSION = 5.0;",
+        '\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2,6";',
+    ]
+    if has_mac_engine:
+        lines += [
+            f'\t\t\t\t"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = (',
+            f'\t\t\t\t\t"{mac_lib_path}",',
+            '\t\t\t\t\t"$(inherited)",',
+            "\t\t\t\t);",
+            f'\t\t\t\t"OTHER_LDFLAGS[sdk=macosx*]" = (',
+            '\t\t\t\t\t"$(inherited)",',
+            f'\t\t\t\t\t"{mac_ld}",',
+            "\t\t\t\t);",
+            '\t\t\t\t"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx*]" = "ORCA_LINKED";',
+        ]
+    if has_ios_engine:
+        lines += [
+            f'\t\t\t\t"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (',
+            f'\t\t\t\t\t"{ios_lib_path}",',
+            '\t\t\t\t\t"$(inherited)",',
+            "\t\t\t\t);",
+            f'\t\t\t\t"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (',
+            '\t\t\t\t\t"$(inherited)",',
+            f'\t\t\t\t\t"{ios_ld}",',
+            "\t\t\t\t);",
+            '\t\t\t\t"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = "ORCA_LINKED";',
+            # Device arm64 uses same path once built for iphoneos (future)
+            f'\t\t\t\t"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (',
+            f'\t\t\t\t\t"{ios_lib_path}",',
+            '\t\t\t\t\t"$(inherited)",',
+            "\t\t\t\t);",
+            f'\t\t\t\t"OTHER_LDFLAGS[sdk=iphoneos*]" = (',
+            '\t\t\t\t\t"$(inherited)",',
+            f'\t\t\t\t\t"{ios_ld}",',
+            "\t\t\t\t);",
+            '\t\t\t\t"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "ORCA_LINKED";',
+        ]
+    lines += [
+        "\t\t\t};",
+        f"\t\t\tname = {name};",
+    ]
+    return "\n".join(lines)
+
 
 pbx = f'''// !$*UTF8*$!
 {{
@@ -272,9 +287,11 @@ pbx = f'''// !$*UTF8*$!
 			}};
 			name = Release;
 		}};
-		{IDs["debug_tgt"]} /* Debug */ = {{{tgt_settings("Debug", has_mac_engine)}
+		{IDs["debug_tgt"]} /* Debug */ = {{
+{tgt_settings("Debug")}
 		}};
-		{IDs["release_tgt"]} /* Release */ = {{{tgt_settings("Release", has_mac_engine)}
+		{IDs["release_tgt"]} /* Release */ = {{
+{tgt_settings("Release")}
 		}};
 /* End XCBuildConfiguration section */
 
