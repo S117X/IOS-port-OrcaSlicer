@@ -29,6 +29,11 @@ else ()
         else ()
             set(_gmp_build_arch ${CMAKE_SYSTEM_PROCESSOR})
         endif()
+        # Xcode clang needs SDK sysroot or configure fails with: ld: library 'System' not found
+        if (CMAKE_OSX_SYSROOT)
+            set(_gmp_ccflags "${_gmp_ccflags} -isysroot ${CMAKE_OSX_SYSROOT}")
+            set(_gmp_ldflags "${_gmp_ldflags} -isysroot ${CMAKE_OSX_SYSROOT}")
+        endif()
         if (IS_CROSS_COMPILE)
             if (${CMAKE_OSX_ARCHITECTURES} MATCHES "arm")
                 set(_gmp_host_arch aarch64)
@@ -65,7 +70,7 @@ else ()
         DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/GMP
         PATCH_COMMAND git apply ${GMP_DIRECTORY_FLAG} --verbose ${CMAKE_CURRENT_LIST_DIR}/0001-GMP_GCC15.patch
         BUILD_IN_SOURCE ON
-        CONFIGURE_COMMAND  env "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "CFLAGS=${_gmp_ccflags}" "CXXFLAGS=${_gmp_ccflags}" "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS}" ./configure ${_cross_compile_arg} --enable-shared=no --enable-cxx=yes --enable-static=yes "--prefix=${DESTDIR}" ${_gmp_build_tgt}
+        CONFIGURE_COMMAND  env "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "CFLAGS=${_gmp_ccflags}" "CXXFLAGS=${_gmp_ccflags}" "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS} ${_gmp_ldflags}" ./configure ${_cross_compile_arg} --enable-shared=no --enable-cxx=yes --enable-static=yes "--prefix=${DESTDIR}" ${_gmp_build_tgt}
         BUILD_COMMAND     make -j
         INSTALL_COMMAND   make install
     )

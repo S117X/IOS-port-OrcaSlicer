@@ -3,10 +3,6 @@
 import Foundation
 import Combine
 
-#if canImport(OrcaCAPI)
-import OrcaCAPI
-#endif
-
 /// Thin ObservableObject around C ABI in `src/ios/orca_slice_c_api.h`.
 final class OrcaEngine: ObservableObject {
     @Published var modelName: String?
@@ -22,7 +18,15 @@ final class OrcaEngine: ObservableObject {
             return String(cString: c)
         }
         #endif
-        return "OrcaSlicer iOS host (link orca_ios_api + libslic3r to enable slice)"
+        return "OrcaSlicer host (engine not linked — build libs, regenerate Xcode project)"
+    }
+
+    var isLinked: Bool {
+        #if ORCA_LINKED
+        return session != nil
+        #else
+        return false
+        #endif
     }
 
     init() {
@@ -31,9 +35,19 @@ final class OrcaEngine: ObservableObject {
         session = orca_session_create(res)
         if session == nil {
             lastMessage = "orca_session_create failed"
+        } else {
+            lastMessage = "Engine ready (official libslic3r)"
+            // Sensible FFF defaults when no profile JSON loaded
+            _ = setOptionRaw("layer_height", "0.2")
+            _ = setOptionRaw("wall_loops", "2")
+            _ = setOptionRaw("sparse_infill_density", "15%")
+            _ = setOptionRaw("filament_diameter", "1.75")
+            _ = setOptionRaw("nozzle_diameter", "0.4")
+            _ = setOptionRaw("printable_area", "0x0,220x0,220x220,0x220")
+            _ = setOptionRaw("printable_height", "250")
         }
         #else
-        lastMessage = "Build with ORCA_LINKED + static libs from cmake -DORCA_IOS_API=ON"
+        lastMessage = "Build with ORCA_LINKED + liborca_engine.a (see scripts/bundle_engine_libs.sh)"
         #endif
     }
 
@@ -41,6 +55,26 @@ final class OrcaEngine: ObservableObject {
         #if ORCA_LINKED
         if let s = session { orca_session_destroy(s) }
         #endif
+    }
+
+    #if ORCA_LINKED
+    @discardableResult
+    private func setOptionRaw(_ key: String, _ value: String) -> Int32 {
+        guard let s = session else { return -1 }
+        return key.withCString { k in
+            value.withCString { v in
+                orca_session_set_option(s, k, v)
+            }
+        }
+    }
+    #endif
+
+    func loadBundledSampleCube() -> String {
+        if let url = Bundle.main.url(forResource: "sample_cube_20mm", withExtension: "stl") {
+            return loadModel(url: url)
+        }
+        lastMessage = "sample_cube_20mm.stl not in bundle"
+        return lastMessage
     }
 
     func loadModel(url: URL) -> String {
@@ -79,7 +113,7 @@ final class OrcaEngine: ObservableObject {
         #else
         modelName = url.lastPathComponent + " (path only — engine not linked)"
         hasModel = false
-        lastMessage = "Engine not linked. Open PORT_IOS.md / scripts/build_ios.sh"
+        lastMessage = "Engine not linked. Run scripts/build_macos_headless_api.sh + bundle_engine_libs.sh"
         return lastMessage
         #endif
     }

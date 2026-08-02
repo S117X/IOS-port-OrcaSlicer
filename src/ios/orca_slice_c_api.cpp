@@ -41,8 +41,8 @@ static void ensure_default_config(orca_session *s)
 {
     if (s->has_config)
         return;
-    // Official defaults from libslic3r PrintConfig
-    s->config = PrintConfig::full_print_config();
+    // Official defaults from libslic3r (API lives on DynamicPrintAndCLIConfig)
+    s->config = DynamicPrintAndCLIConfig::full_print_config();
     s->has_config = true;
 }
 
@@ -54,11 +54,12 @@ orca_session_t *orca_session_create(const char *resources_path)
         auto *s = new orca_session();
         if (resources_path && *resources_path)
             s->resources_path = resources_path;
-        // Point utils at bundled resources when set (profiles, etc.)
+        // Point libslic3r at bundled resources (profiles, nozzle_info.json, …)
         if (!s->resources_path.empty()) {
-            // set_var_dir used by desktop; keep path for profile loads
+            set_resources_dir(s->resources_path);
+            set_var_dir(s->resources_path);
         }
-        s->config = PrintConfig::full_print_config();
+        s->config = DynamicPrintAndCLIConfig::full_print_config();
         s->has_config = true;
         return s;
     } catch (const std::exception &ex) {

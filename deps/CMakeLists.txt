@@ -113,6 +113,25 @@ endif()
 
 set(IS_CROSS_COMPILE FALSE)
 
+# Headless / iOS engine deps: skip desktop GUI packages
+option(ORCA_IOS_DEPS "Build deps for iOS/headless engine (skip wx, GLEW, GLFW, OpenCSG, python)" OFF)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(ORCA_IOS_DEPS ON CACHE BOOL "" FORCE)
+    message(STATUS "iOS system: forcing ORCA_IOS_DEPS=ON")
+    # Host cmake may leave CMAKE_SYSTEM_PROCESSOR empty for iOS toolchains
+    if (NOT CMAKE_SYSTEM_PROCESSOR OR CMAKE_SYSTEM_PROCESSOR STREQUAL "")
+        if (CMAKE_OSX_ARCHITECTURES)
+            list(GET CMAKE_OSX_ARCHITECTURES 0 CMAKE_SYSTEM_PROCESSOR)
+        else ()
+            set(CMAKE_SYSTEM_PROCESSOR "arm64")
+        endif ()
+        message(STATUS "iOS: CMAKE_SYSTEM_PROCESSOR defaulted to ${CMAKE_SYSTEM_PROCESSOR}")
+    endif ()
+    if (NOT CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES "${CMAKE_SYSTEM_PROCESSOR}" CACHE STRING "" FORCE)
+    endif ()
+endif ()
+
 if (APPLE)
     list(LENGTH CMAKE_OSX_ARCHITECTURES _arch_len)
     if (_arch_len GREATER 1)
@@ -120,9 +139,20 @@ if (APPLE)
     endif ()
     set(CMAKE_FIND_FRAMEWORK LAST)
     set(CMAKE_FIND_APPBUNDLE LAST)
-    list(FIND CMAKE_OSX_ARCHITECTURES ${CMAKE_SYSTEM_PROCESSOR} _arch_idx)
+    if (CMAKE_SYSTEM_PROCESSOR AND CMAKE_OSX_ARCHITECTURES)
+        list(FIND CMAKE_OSX_ARCHITECTURES ${CMAKE_SYSTEM_PROCESSOR} _arch_idx)
+    else ()
+        set(_arch_idx 0)
+    endif ()
     message(STATUS "prusaslicer_add_cmake_project for Apple")
-    if (CMAKE_OSX_ARCHITECTURES AND _arch_idx LESS 0)
+    if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        set(IS_CROSS_COMPILE TRUE)
+        set(CMAKE_CXX_COMPILER_ID "Clang")
+        string(REPLACE ";" "$<SEMICOLON>" CMAKE_OSX_ARCHS "${CMAKE_OSX_ARCHITECTURES}")
+        set(_cmake_osx_arch -DCMAKE_OSX_ARCHITECTURES:STRING=${CMAKE_OSX_ARCHS})
+        set(_cmake_args_osx_arch CMAKE_ARGS -DCMAKE_OSX_ARCHITECTURES:STRING=${CMAKE_OSX_ARCHS})
+        message(STATUS "iOS cross-compile target ${CMAKE_OSX_ARCHS} sysroot=${CMAKE_OSX_SYSROOT}")
+    elseif (CMAKE_OSX_ARCHITECTURES AND _arch_idx LESS 0)
         message(STATUS "prusaslicer_add_cmake_project for Apple crosscompiling")
         set(IS_CROSS_COMPILE TRUE)
         set(CMAKE_CXX_COMPILER_ID "Clang")
@@ -346,10 +376,13 @@ include(Boost/Boost.cmake)
 
 include(Cereal/Cereal.cmake)
 include(Qhull/Qhull.cmake)
-include(GLEW/GLEW.cmake)
-
-include(GLFW/GLFW.cmake)
-include(OpenCSG/OpenCSG.cmake)
+if (NOT ORCA_IOS_DEPS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    include(GLEW/GLEW.cmake)
+    include(GLFW/GLFW.cmake)
+    include(OpenCSG/OpenCSG.cmake)
+else ()
+    message(STATUS "ORCA_IOS_DEPS/iOS: skipping GLEW, GLFW, OpenCSG")
+endif ()
 
 include(TBB/TBB.cmake)
 
@@ -394,10 +427,15 @@ if (NOT JPEG_FOUND)
 endif()
 
 # flatpak builds wxwidgets separately, so it is not included in the deps target
+# ORCA_IOS_DEPS defined earlier — headless engine only (no wx / OpenGL / python)
 set(WXWIDGETS_PKG "")
-include(wxWidgets/wxWidgets.cmake)
-if (NOT FLATPAK)
-    set(WXWIDGETS_PKG "dep_wxWidgets")
+if (NOT ORCA_IOS_DEPS)
+    include(wxWidgets/wxWidgets.cmake)
+    if (NOT FLATPAK)
+        set(WXWIDGETS_PKG "dep_wxWidgets")
+    endif()
+else ()
+    message(STATUS "ORCA_IOS_DEPS: skipping wxWidgets")
 endif()
 
 set(FREETYPE_PKG "")
@@ -422,8 +460,10 @@ endif ()
 
 include(OCCT/OCCT.cmake)
 include(OpenCV/OpenCV.cmake)
-include(python3/python3.cmake)
-include(wxInspector/wxInspector.cmake)
+if (NOT ORCA_IOS_DEPS)
+    include(python3/python3.cmake)
+    include(wxInspector/wxInspector.cmake)
+endif ()
 
 set(_dep_list
     dep_Boost
@@ -435,20 +475,20 @@ set(_dep_list
     dep_Draco
     dep_NLopt
     dep_OpenVDB
-    dep_OpenCSG
     dep_OpenCV
     dep_Eigen
     dep_CGAL
-    dep_GLFW
     dep_OCCT
     ${FREETYPE_PKG}
     ${PNG_PKG}
     ${ZLIB_PKG}
     ${EXPAT_PKG}
     dep_libnoise
-    dep_python3
-    dep_wxInspector
     )
+
+if (NOT ORCA_IOS_DEPS)
+    list(APPEND _dep_list dep_OpenCSG dep_GLFW dep_python3 dep_wxInspector)
+endif ()
 
 if (MSVC)
     # Experimental

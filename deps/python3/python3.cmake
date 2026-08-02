@@ -134,6 +134,10 @@ elseif(APPLE)
     endif()
 
     set(_python_arch_flags "-arch ${_python_arch_flag} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    # Xcode clang needs SDK sysroot or configure fails with: ld: library 'System' not found
+    if(CMAKE_OSX_SYSROOT)
+        set(_python_arch_flags "${_python_arch_flags} -isysroot ${CMAKE_OSX_SYSROOT}")
+    endif()
     # No -rpath: all other deps are static, so libpython has no shared
     # dependencies to find there. headerpad reserves load-command space for
     # the post-install -add_rpath below.
@@ -142,6 +146,9 @@ elseif(APPLE)
     if(IS_CROSS_COMPILE)
         set(_python_build_tgt --build=${_python_build_arch}-apple-darwin --host=${_python_host_arch}-apple-darwin)
         set(_python_build_arch_flags "-arch ${_python_build_arch_flag} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+        if(CMAKE_OSX_SYSROOT)
+            set(_python_build_arch_flags "${_python_build_arch_flags} -isysroot ${CMAKE_OSX_SYSROOT}")
+        endif()
         set(_python_build_ldflags "${_python_build_arch_flags} -Wl,-rpath,${DESTDIR}/lib")
         set(_python_build_python_dir "<SOURCE_DIR>/build-python-host")
         set(_python_build_python "${_python_build_python_dir}/python")
@@ -184,14 +191,24 @@ elseif(APPLE)
                  py_cv_module__tkinter=n/a"
         )
     else()
-        set(_python_build_tgt --build=${_python_host_arch}-apple-darwin)
+        # Use arm64-apple-darwin (not aarch64) for native Apple builds; pass
+        # SDKROOT + CPPFLAGS so configure header probes find time.h etc.
+        set(_python_build_tgt --build=arm64-apple-darwin)
+        set(_python_cppflags "")
+        set(_python_sdkroot "")
+        if(CMAKE_OSX_SYSROOT)
+            set(_python_cppflags "-isysroot ${CMAKE_OSX_SYSROOT}")
+            set(_python_sdkroot "${CMAKE_OSX_SYSROOT}")
+        endif()
         set(_conf_cmd
             env
             "CC=${CMAKE_C_COMPILER}"
             "CXX=${CMAKE_CXX_COMPILER}"
             "CFLAGS=${_python_arch_flags}"
             "CXXFLAGS=${_python_arch_flags}"
+            "CPPFLAGS=${_python_cppflags}"
             "LDFLAGS=${_python_ldflags}"
+            "SDKROOT=${_python_sdkroot}"
             "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
             ./configure
             --prefix=${DESTDIR}/libpython
