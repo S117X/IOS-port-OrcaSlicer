@@ -2,7 +2,7 @@
 # binaries.  We need this because it compiles some code to generate other
 # source and we need to be able to run the executables.  When we link the
 # library, the x86_64 part will be ignored.
-if (APPLE AND IS_CROSS_COMPILE)
+if (APPLE AND IS_CROSS_COMPILE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64" AND ${CMAKE_OSX_ARCHITECTURES} MATCHES "arm")
         set(_openexr_arch arm64^^x86_64)
         set(_openxr_list_sep LIST_SEPARATOR ^^)

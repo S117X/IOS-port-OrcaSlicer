@@ -3,15 +3,38 @@
 # That can happen when one uses a recent SDK but specifies an older Deployment target
 set(DEP_WERRORS_SDK "-Werror=partial-availability -Werror=unguarded-availability -Werror=unguarded-availability-new")
 
-set(DEP_CMAKE_OPTS
-    "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
-    "-DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}"
-    "-DCMAKE_OSX_DEPLOYMENT_TARGET=${DEP_OSX_TARGET}"
-    "-DCMAKE_CXX_FLAGS=${DEP_WERRORS_SDK}"
-    "-DCMAKE_C_FLAGS=${DEP_WERRORS_SDK}"
-    "-DCMAKE_FIND_FRAMEWORK=LAST"
-    "-DCMAKE_FIND_APPBUNDLE=LAST"
-)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # Force ExternalProject cmake children to target iOS / Simulator (not macOS)
+    if (CMAKE_OSX_SYSROOT MATCHES "[Ii][Pp]hone[Ss]imulator")
+        set(_ios_plat_flags "-mios-simulator-version-min=${DEP_OSX_TARGET}")
+    else ()
+        set(_ios_plat_flags "-miphoneos-version-min=${DEP_OSX_TARGET}")
+    endif ()
+    set(DEP_CMAKE_OPTS
+        "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+        "-DCMAKE_SYSTEM_NAME=iOS"
+        "-DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}"
+        "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}"
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=${DEP_OSX_TARGET}"
+        "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+        "-DCMAKE_CXX_FLAGS=${DEP_WERRORS_SDK} ${_ios_plat_flags}"
+        "-DCMAKE_C_FLAGS=${DEP_WERRORS_SDK} ${_ios_plat_flags}"
+        "-DCMAKE_FIND_FRAMEWORK=LAST"
+        "-DCMAKE_FIND_APPBUNDLE=LAST"
+    )
+    message(STATUS "DEP_CMAKE_OPTS iOS: sysroot=${CMAKE_OSX_SYSROOT} flags=${_ios_plat_flags}")
+else ()
+    set(DEP_CMAKE_OPTS
+        "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+        "-DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}"
+        "-DCMAKE_OSX_DEPLOYMENT_TARGET=${DEP_OSX_TARGET}"
+        "-DCMAKE_CXX_FLAGS=${DEP_WERRORS_SDK}"
+        "-DCMAKE_C_FLAGS=${DEP_WERRORS_SDK}"
+        "-DCMAKE_FIND_FRAMEWORK=LAST"
+        "-DCMAKE_FIND_APPBUNDLE=LAST"
+    )
+endif ()
 
 include("deps-unix-common.cmake")
 
