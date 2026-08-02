@@ -38,6 +38,14 @@
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSAllowsArbitraryLoadsInLocalNetwork</key>
+		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OrcaSlicer connects to Moonraker / OctoPrint printers on your local network to upload G-code.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+	</array>
 </dict>
 </plist>

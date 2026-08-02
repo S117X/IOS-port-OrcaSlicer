@@ -49,8 +49,10 @@ Official libslic3r (C++ — every engine .cpp stays upstream code)
 | Xcode app `ORCA_LINKED` on **My Mac** | Done |
 | Xcode app `ORCA_LINKED` on **iOS Simulator** | Done |
 | SceneKit plate: real mesh + orbit/pan/zoom | Done |
-| G-code path preview after slice | Done (polyline toolpaths) |
+| G-code path preview after slice | Done (polyline toolpaths + layer Z slider) |
+| Object tools (center / arrange / rotate / scale / nudge) | Done |
 | Bundled process profile JSON | Done (minimal `process_0.20mm_Standard`) |
+| Device tab: Moonraker connect + G-code upload | Done (basic HTTP API) |
 | SwiftUI Prepare / Preview / Device + Process sheet | In progress (not desktop GUI parity) |
 | Physical device (`iphoneos`) deps/engine | Not yet |
 | App Store release | **Not ready** — AGPL-3.0 + incomplete UI |

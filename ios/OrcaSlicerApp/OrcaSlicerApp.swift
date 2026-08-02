@@ -191,22 +191,203 @@ struct OrcaRootView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    @State private var printerHost = "http://192.168.1.100"
+    @State private var printerStatus = "Not connected"
+    @State private var isConnecting = false
+    @State private var nozzleTemp = "210"
+    @State private var bedTemp = "60"
+
     private var devicePlaceholder: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "printer.fill")
-                .font(.system(size: 40))
-                .foregroundStyle(OrcaTheme.accent)
-            Text("Device / send to printer")
-                .font(.headline)
-                .foregroundStyle(OrcaTheme.text)
-            Text("Moonraker · OctoPrint · network send — porting next.")
-                .font(.subheadline)
-                .foregroundStyle(OrcaTheme.muted)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 12) {
+                    Image(systemName: "printer.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(OrcaTheme.accent)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Device")
+                            .font(.headline)
+                            .foregroundStyle(OrcaTheme.text)
+                        Text(printerStatus)
+                            .font(.subheadline)
+                            .foregroundStyle(OrcaTheme.muted)
+                    }
+                    Spacer()
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Moonraker / Klipper host")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OrcaTheme.muted)
+                    TextField("http://printer.local", text: $printerHost)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .font(.system(size: 15, design: .monospaced))
+                        .foregroundStyle(OrcaTheme.text)
+                        .padding(12)
+                        .background(OrcaTheme.elevated)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await connectMoonraker() }
+                    } label: {
+                        HStack {
+                            if isConnecting { ProgressView().tint(.white) }
+                            Text(isConnecting ? "Connecting…" : "Connect")
+                                .fontWeight(.bold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(OrcaTheme.accent)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(isConnecting)
+                    .buttonStyle(.plain)
+
+                    Button {
+                        Task { await uploadGCodeToMoonraker() }
+                    } label: {
+                        Text("Upload G-code")
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 48)
+                            .background(engine.gcodeURL != nil ? OrcaTheme.elevated : OrcaTheme.elevated.opacity(0.5))
+                            .foregroundStyle(engine.gcodeURL != nil ? OrcaTheme.accent : OrcaTheme.muted)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(engine.gcodeURL == nil || isConnecting)
+                    .buttonStyle(.plain)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Quick temps (local config only until connected)")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OrcaTheme.muted)
+                    HStack(spacing: 10) {
+                        tempField("Nozzle °C", text: $nozzleTemp) {
+                            engine.setOption("nozzle_temperature", value: nozzleTemp)
+                            engine.setOption("nozzle_temperature_initial_layer", value: nozzleTemp)
+                            status = engine.lastMessage
+                        }
+                        tempField("Bed °C", text: $bedTemp) {
+                            engine.setOption("bed_temperature", value: bedTemp)
+                            engine.setOption("bed_temperature_initial_layer", value: bedTemp)
+                            status = engine.lastMessage
+                        }
+                    }
+                }
+
+                Text("Uses Moonraker HTTP API (server.info / server.files.upload). Full printer control (pause, resume, cam) is next.")
+                    .font(.caption)
+                    .foregroundStyle(OrcaTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(OrcaTheme.bg.opacity(0.92))
+        .background(OrcaTheme.bg.opacity(0.96))
+    }
+
+    private func tempField(_ title: String, text: Binding<String>, apply: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(OrcaTheme.muted)
+            HStack {
+                TextField(title, text: text)
+                    .keyboardType(.numberPad)
+                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.text)
+                Button("Set", action: apply)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(OrcaTheme.accent)
+            }
+            .padding(10)
+            .background(OrcaTheme.elevated)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func connectMoonraker() async {
+        isConnecting = true
+        defer { isConnecting = false }
+        guard let base = URL(string: printerHost.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            printerStatus = "Invalid URL"
+            return
+        }
+        let info = base.appendingPathComponent("server/info")
+        var req = URLRequest(url: info)
+        req.timeoutInterval = 5
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 200 {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let result = json["result"] as? [String: Any] {
+                    let ver = result["klippy_state"] as? String
+                        ?? result["moonraker_version"] as? String
+                        ?? "ok"
+                    printerStatus = "Connected · \(ver)"
+                } else {
+                    printerStatus = "Connected (HTTP \(code))"
+                }
+            } else {
+                printerStatus = "HTTP \(code) from server.info"
+            }
+        } catch {
+            printerStatus = "Unreachable: \(error.localizedDescription)"
+        }
+    }
+
+    private func uploadGCodeToMoonraker() async {
+        guard let gcode = engine.gcodeURL else {
+            printerStatus = "Slice first to produce G-code"
+            return
+        }
+        guard let base = URL(string: printerHost.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            printerStatus = "Invalid host URL"
+            return
+        }
+        isConnecting = true
+        defer { isConnecting = false }
+        // Moonraker multipart upload: POST /server/files/upload
+        let uploadURL = base.appendingPathComponent("server/files/upload")
+        let boundary = "OrcaBoundary\(UUID().uuidString)"
+        var req = URLRequest(url: uploadURL)
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 60
+        guard let fileData = try? Data(contentsOf: gcode) else {
+            printerStatus = "Could not read G-code file"
+            return
+        }
+        var body = Data()
+        let filename = gcode.lastPathComponent
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
+        body.append(fileData)
+        body.append("\r\n--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"root\"\r\n\r\n".data(using: .utf8)!)
+        body.append("gcodes\r\n".data(using: .utf8)!)
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        req.httpBody = body
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if (200...299).contains(code) {
+                printerStatus = "Uploaded \(filename) → gcodes/"
+            } else {
+                printerStatus = "Upload failed HTTP \(code)"
+            }
+        } catch {
+            printerStatus = "Upload error: \(error.localizedDescription)"
+        }
     }
 
     private func controlsPanel(bottomInset: CGFloat) -> some View {
@@ -459,6 +640,26 @@ struct OrcaRootView: View {
                     }
                 } header: {
                     Text("Speeds")
+                }
+                Section {
+                    processField(title: "nozzle_temperature", unit: "°C", text: $nozzleTemp) {
+                        engine.setOption("nozzle_temperature", value: nozzleTemp)
+                        engine.setOption("nozzle_temperature_initial_layer", value: nozzleTemp)
+                        status = engine.lastMessage
+                    }
+                    processField(title: "bed_temperature", unit: "°C", text: $bedTemp) {
+                        engine.setOption("bed_temperature", value: bedTemp)
+                        engine.setOption("bed_temperature_initial_layer", value: bedTemp)
+                        status = engine.lastMessage
+                    }
+                    processField(title: "filament_diameter", unit: "mm", text: .constant("1.75")) {
+                        engine.setOption("filament_diameter", value: "1.75")
+                        status = engine.lastMessage
+                    }
+                } header: {
+                    Text("Filament / temps")
+                } footer: {
+                    Text("Options map to DynamicPrintConfig keys used by official G-code export.")
                 }
                 Section("Engine") {
                     Text(engine.version)
