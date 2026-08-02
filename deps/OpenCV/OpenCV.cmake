@@ -15,13 +15,19 @@ if (IN_GIT_REPO)
 endif ()
 
 # iOS: bundled libpng hits missing macOS-only headers (fp.h). Use system/dep PNG instead.
+# Also set IOS=ON so imgcodecs skips macosx_conversions.mm (AppKit).
 set(_opencv_png_args -DBUILD_PNG=ON)
+set(_opencv_ios_args "")
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ORCA_IOS_DEPS)
     set(_opencv_png_args
         -DBUILD_PNG=OFF
         -DWITH_PNG=ON
         -DPNG_PNG_INCLUDE_DIR=${DESTDIR}/include
         -DPNG_LIBRARY=${DESTDIR}/lib/libpng.a
+    )
+    set(_opencv_ios_args
+        -DIOS=ON
+        -DAPPLE_FRAMEWORK=OFF
     )
 endif ()
 
@@ -44,6 +50,7 @@ orcaslicer_add_cmake_project(OpenCV
        -DBUILD_opencv_java=OFF
        -DBUILD_OPENEXR=OFF
        ${_opencv_png_args}
+       ${_opencv_ios_args}
        -DBUILD_TBB=OFF
        -DBUILD_WEBP=OFF
        -DBUILD_ZLIB=OFF
