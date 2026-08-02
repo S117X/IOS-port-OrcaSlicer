@@ -16,10 +16,10 @@ It is engineering work to run the **official `libslic3r` engine** on Apple platf
 iPhone Simulator — prepare shell with **official libslic3r linked** (`ORCA_LINKED`):
 
 <p align="center">
-  <img src="docs/images/ios-simulator-prepare.png" alt="OrcaSlicer iOS port running in iPhone Simulator" width="320" />
+  <img src="docs/images/ios-simulator-prepare.png?raw=1" alt="OrcaSlicer iOS port — iPhone Simulator (official teal + logo, libslic3r linked)" width="320" />
 </p>
 
-*Captured from the running Simulator app (`com.orcaslicer.ios`). Dark prepare view: build plate, Open / Sample / Process, Slice plate. Engine status: “Official libslic3r linked.”*
+*Live Simulator capture (Aug 2026): official Orca logo + brand teal (`#009688`), prepare plate, Open / Sample / Process / Slice plate. Engine: “Official libslic3r linked.”*
 
 ---
 
