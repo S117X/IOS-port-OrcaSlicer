@@ -44,6 +44,9 @@ struct OrcaRootView: View {
     @State private var importAppend = false
     @State private var showProcess = false
     @State private var showCalibration = false
+    @State private var showPresetImporter = false
+    @State private var presetImportKind: Int = 0 // 0 process, 1 filament, 2 overlay
+    @State private var exportShareURL: URL?
     @State private var projectURL: URL?
     @State private var layerHeight = "0.20"
     @State private var infill = "15"
@@ -134,6 +137,25 @@ struct OrcaRootView: View {
             allowedContentTypes: modelTypes,
             allowsMultipleSelection: false
         ) { handleImport($0) }
+        .fileImporter(
+            isPresented: $showPresetImporter,
+            allowedContentTypes: [.json, .data],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                let kind: Int? = presetImportKind == 2 ? nil : presetImportKind
+                if engine.importConfigJSON(url: url, asUserPreset: kind) {
+                    status = engine.lastMessage
+                    syncProcessFieldsFromEngine()
+                } else {
+                    status = engine.lastMessage
+                }
+            case .failure(let err):
+                status = err.localizedDescription
+            }
+        }
     }
 
     private var headerBar: some View {
@@ -1757,6 +1779,10 @@ struct OrcaRootView: View {
     @State private var filamentSlotForPicker = 0
     @State private var showAllSettings = false
     @State private var userProcessName = ""
+    @State private var userFilamentName = ""
+    @State private var cloneNx = "2"
+    @State private var cloneNy = "2"
+    @State private var cutZText = ""
     // Calibration sheet fields
     @State private var calibTempStart = "230"
     @State private var calibTempEnd = "190"
@@ -2183,6 +2209,178 @@ struct OrcaRootView: View {
                     }
                 } header: {
                     Text("User process (persists)")
+                }
+
+                Section {
+                    TextField("Name (e.g. My PLA)", text: $userFilamentName)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(size: 15, design: .monospaced))
+                        .foregroundStyle(OrcaTheme.text)
+                        .listRowBackground(OrcaTheme.panel)
+                    Button {
+                        let name = userFilamentName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if engine.saveUserFilament(name: name.isEmpty ? "My Filament" : name) {
+                            status = engine.lastMessage
+                            if userFilamentName.isEmpty { userFilamentName = "My Filament" }
+                        } else {
+                            status = engine.lastMessage
+                        }
+                    } label: {
+                        Text("Save current settings as user filament")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    if !engine.userFilamentNames.isEmpty {
+                        Text("Saved: \(engine.userFilamentNames.joined(separator: ", "))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(OrcaTheme.muted)
+                            .listRowBackground(OrcaTheme.panel)
+                    }
+                } header: {
+                    Text("User filament (persists)")
+                }
+
+                Section {
+                    Button {
+                        if let url = engine.exportConfigJSON() {
+                            status = engine.lastMessage
+                            exportShareURL = url
+                        } else {
+                            status = engine.lastMessage
+                            exportShareURL = nil
+                        }
+                    } label: {
+                        Label("Export current config JSON", systemImage: "square.and.arrow.up")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    if let url = exportShareURL {
+                        ShareLink(item: url) {
+                            Label("Share \(url.lastPathComponent)", systemImage: "square.and.arrow.up.on.square")
+                                .foregroundStyle(OrcaTheme.accent)
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+                    }
+                    Button {
+                        presetImportKind = 0
+                        showPresetImporter = true
+                    } label: {
+                        Text("Import process JSON from Files…")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    Button {
+                        presetImportKind = 1
+                        showPresetImporter = true
+                    } label: {
+                        Text("Import filament JSON from Files…")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    Button {
+                        presetImportKind = 2
+                        showPresetImporter = true
+                    } label: {
+                        Text("Import config overlay JSON…")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                } header: {
+                    Text("Export / import config")
+                } footer: {
+                    Text("User presets live in Documents/OrcaSlicer/user_presets/. Export uses official DynamicPrintConfig JSON.")
+                        .font(.system(size: 11))
+                }
+
+                if engine.hasModel {
+                    Section {
+                        HStack {
+                            Text("Grid N×M")
+                                .foregroundStyle(OrcaTheme.muted)
+                            TextField("2", text: $cloneNx)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .foregroundStyle(OrcaTheme.text)
+                                .frame(width: 40)
+                            Text("×").foregroundStyle(OrcaTheme.muted)
+                            TextField("2", text: $cloneNy)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .foregroundStyle(OrcaTheme.text)
+                                .frame(width: 40)
+                            Spacer()
+                            Button("Clone") {
+                                let nx = max(1, min(20, Int(cloneNx) ?? 2))
+                                let ny = max(1, min(20, Int(cloneNy) ?? 2))
+                                if engine.cloneGrid(nx: nx, ny: ny) {
+                                    status = engine.lastMessage
+                                } else {
+                                    status = engine.lastMessage
+                                }
+                            }
+                            .fontWeight(.bold)
+                            .foregroundStyle(OrcaTheme.accent)
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+
+                        Button {
+                            _ = engine.refreshMeshHealth()
+                            status = engine.meshHealthText
+                        } label: {
+                            HStack {
+                                Text("Mesh health")
+                                    .foregroundStyle(OrcaTheme.text)
+                                Spacer()
+                                Text(engine.meshHealthText.isEmpty ? "Check" : engine.meshHealthText)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(OrcaTheme.muted)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+                        Button {
+                            if engine.repairMesh() {
+                                status = engine.lastMessage
+                            } else {
+                                status = engine.lastMessage
+                            }
+                        } label: {
+                            Text("Repair mesh (CGAL)")
+                                .foregroundStyle(OrcaTheme.accent)
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+
+                        HStack {
+                            Text("Cut Z mm")
+                                .foregroundStyle(OrcaTheme.muted)
+                            TextField("mid", text: $cutZText)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .foregroundStyle(OrcaTheme.text)
+                            Button("Cut") {
+                                let zCut: Float
+                                if let v = Float(cutZText), v.isFinite {
+                                    zCut = v
+                                } else {
+                                    zCut = (engine.modelMinZ + engine.modelMaxZ) * 0.5
+                                }
+                                if engine.cutObjectZ(zCut) {
+                                    status = engine.lastMessage
+                                } else {
+                                    status = engine.lastMessage
+                                }
+                            }
+                            .fontWeight(.bold)
+                            .foregroundStyle(OrcaTheme.accent)
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+                    } header: {
+                        Text("Mesh / object ops")
+                    } footer: {
+                        Text("Clone grid uses official arrange. Cut is horizontal plane (KeepUpper+KeepLower). Repair reports open edges.")
+                            .font(.system(size: 11))
+                    }
                 }
 
                 if !engine.presetsLoaded {

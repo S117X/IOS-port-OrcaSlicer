@@ -33,6 +33,9 @@
 #include "libslic3r/Arrange.hpp"
 #include "libslic3r/Orient.hpp"
 #include "libslic3r/calib.hpp"
+#include "libslic3r/CutUtils.hpp"
+#include "libslic3r/MeshBoolean.hpp"
+#include "libslic3r/Geometry.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -94,7 +97,9 @@ struct orca_session {
 
     bool filter_compatible_only{true};
     bool active_process_from_user{false};
+    bool active_filament_from_user{false};
     std::vector<std::string> user_process_names;
+    std::vector<std::string> user_filament_names;
 
     void refresh_name_caches() {
         printer_names.clear();
@@ -128,10 +133,14 @@ struct orca_session {
                 continue;
             filament_names.push_back(p.name);
         }
-        // Append user-saved process presets (always listed)
+        // Append user-saved process / filament presets (always listed)
         for (const std::string &u : user_process_names) {
             if (std::find(process_names.begin(), process_names.end(), u) == process_names.end())
                 process_names.push_back(u);
+        }
+        for (const std::string &u : user_filament_names) {
+            if (std::find(filament_names.begin(), filament_names.end(), u) == filament_names.end())
+                filament_names.push_back(u);
         }
         std::sort(printer_names.begin(), printer_names.end());
         // Keep vendors aligned after sort — rebuild vendors map
@@ -154,10 +163,27 @@ struct orca_session {
         return fs::path(data_dir_path.empty() ? "." : data_dir_path) / "user_presets" / "process";
     }
 
-    void scan_user_process_presets() {
-        user_process_names.clear();
+    fs::path user_filament_dir() const {
+        return fs::path(data_dir_path.empty() ? "." : data_dir_path) / "user_presets" / "filament";
+    }
+
+    static std::string sanitize_preset_name(const char *name) {
+        std::string safe;
+        if (!name)
+            return safe;
+        for (const char *p = name; *p; ++p) {
+            char c = *p;
+            if (std::isalnum((unsigned char)c) || c == ' ' || c == '-' || c == '_' || c == '.')
+                safe.push_back(c);
+            else
+                safe.push_back('_');
+        }
+        return safe;
+    }
+
+    static void scan_user_preset_dir(const fs::path &dir, std::vector<std::string> &out) {
+        out.clear();
         try {
-            fs::path dir = user_process_dir();
             if (!fs::exists(dir))
                 return;
             for (fs::directory_iterator it(dir), end; it != end; ++it) {
@@ -165,11 +191,19 @@ struct orca_session {
                     continue;
                 if (it->path().extension() != ".json")
                     continue;
-                user_process_names.push_back(it->path().stem().string());
+                out.push_back(it->path().stem().string());
             }
-            std::sort(user_process_names.begin(), user_process_names.end());
+            std::sort(out.begin(), out.end());
         } catch (...) {
         }
+    }
+
+    void scan_user_process_presets() {
+        scan_user_preset_dir(user_process_dir(), user_process_names);
+    }
+
+    void scan_user_filament_presets() {
+        scan_user_preset_dir(user_filament_dir(), user_filament_names);
     }
 
     void sync_selected_caches() {
@@ -1523,6 +1557,7 @@ int orca_session_load_all_presets(orca_session_t *s)
 
         s->preset_bundle->update_compatible(PresetSelectCompatibleType::Never);
         s->scan_user_process_presets();
+        s->scan_user_filament_presets();
         s->refresh_name_caches();
         s->presets_loaded = !s->printer_names.empty();
         if (!s->presets_loaded) {
@@ -1665,6 +1700,24 @@ int orca_session_select_filament(orca_session_t *s, const char *name)
     if (!s || !name || !s->preset_bundle)
         return -1;
     try {
+        // User-saved filament JSON
+        fs::path user_json = s->user_filament_dir() / (std::string(name) + ".json");
+        if (fs::exists(user_json)) {
+            ensure_default_config(s);
+            std::map<std::string, std::string> key_values;
+            std::string reason;
+            ConfigSubstitutionContext ctx(ForwardCompatibilitySubstitutionRule::Enable);
+            int rc = s->config.load_from_json(user_json.string(), ctx, true, key_values, reason);
+            if (rc != 0) {
+                s->set_error(reason.empty() ? "load user filament failed" : reason);
+                return -4;
+            }
+            s->has_config = true;
+            s->selected_filament_cache = name;
+            s->active_filament_from_user = true;
+            return 0;
+        }
+        s->active_filament_from_user = false;
         if (!s->preset_bundle->filaments.select_preset_by_name(name, true)) {
             s->set_error(std::string("filament not found: ") + name);
             return -2;
@@ -1683,22 +1736,32 @@ int orca_session_apply_presets(orca_session_t *s)
     if (!s || !s->preset_bundle)
         return -1;
     try {
-        // Keep user process JSON if currently active
-        DynamicPrintConfig user_overlay;
-        const bool had_user = s->active_process_from_user;
-        const std::string user_name = s->selected_process_cache;
-        if (had_user)
-            user_overlay = s->config;
+        // Keep user process / filament JSON overlays if currently active
+        DynamicPrintConfig user_process_overlay;
+        DynamicPrintConfig user_filament_overlay;
+        const bool had_user_proc = s->active_process_from_user;
+        const bool had_user_fil = s->active_filament_from_user;
+        const std::string user_proc_name = s->selected_process_cache;
+        const std::string user_fil_name = s->selected_filament_cache;
+        if (had_user_proc || had_user_fil) {
+            // Snapshot full session config; overlays re-applied after full_config
+            if (had_user_proc)
+                user_process_overlay = s->config;
+            if (had_user_fil)
+                user_filament_overlay = s->config;
+        }
 
         s->config = s->preset_bundle->full_config(true);
-        if (had_user) {
-            // Re-apply user process options on top of machine/filament full_config
-            s->config.apply(user_overlay);
-        }
+        if (had_user_proc)
+            s->config.apply(user_process_overlay);
+        if (had_user_fil)
+            s->config.apply(user_filament_overlay);
         s->has_config = true;
         s->sync_selected_caches();
-        if (had_user && !user_name.empty())
-            s->selected_process_cache = user_name;
+        if (had_user_proc && !user_proc_name.empty())
+            s->selected_process_cache = user_proc_name;
+        if (had_user_fil && !user_fil_name.empty())
+            s->selected_filament_cache = user_fil_name;
         return 0;
     } catch (const std::exception &ex) {
         s->set_error(std::string("apply_presets: ") + ex.what());
@@ -1735,15 +1798,7 @@ int orca_session_save_user_process(orca_session_t *s, const char *name)
         ensure_default_config(s);
         fs::path dir = s->user_process_dir();
         fs::create_directories(dir);
-        // Sanitize filename
-        std::string safe;
-        for (const char *p = name; *p; ++p) {
-            char c = *p;
-            if (std::isalnum((unsigned char)c) || c == ' ' || c == '-' || c == '_' || c == '.')
-                safe.push_back(c);
-            else
-                safe.push_back('_');
-        }
+        std::string safe = orca_session::sanitize_preset_name(name);
         if (safe.empty()) {
             s->set_error("invalid preset name");
             return -2;
@@ -1777,6 +1832,351 @@ const char *orca_session_user_process_name(orca_session_t *s, int index)
     if (!s || index < 0 || index >= (int)s->user_process_names.size())
         return nullptr;
     return s->user_process_names[(size_t)index].c_str();
+}
+
+int orca_session_save_user_filament(orca_session_t *s, const char *name)
+{
+    if (!s || !name || !*name)
+        return -1;
+    s->clear_error();
+    try {
+        ensure_default_config(s);
+        fs::path dir = s->user_filament_dir();
+        fs::create_directories(dir);
+        std::string safe = orca_session::sanitize_preset_name(name);
+        if (safe.empty()) {
+            s->set_error("invalid filament name");
+            return -2;
+        }
+        fs::path path = dir / (safe + ".json");
+        s->config.save_to_json(path.string(), safe, "User", SoftFever_VERSION);
+        s->scan_user_filament_presets();
+        s->refresh_name_caches();
+        s->selected_filament_cache = safe;
+        s->active_filament_from_user = true;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("save_user_filament: ") + ex.what());
+        return -3;
+    } catch (...) {
+        s->set_error("save_user_filament: unknown error");
+        return -3;
+    }
+}
+
+int orca_session_user_filament_count(orca_session_t *s)
+{
+    if (!s)
+        return 0;
+    return (int)s->user_filament_names.size();
+}
+
+const char *orca_session_user_filament_name(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= (int)s->user_filament_names.size())
+        return nullptr;
+    return s->user_filament_names[(size_t)index].c_str();
+}
+
+int orca_session_export_config(orca_session_t *s, const char *path)
+{
+    if (!s || !path || !*path)
+        return -1;
+    s->clear_error();
+    try {
+        ensure_default_config(s);
+        std::string name = s->selected_process_cache.empty() ? "OrcaConfig" : s->selected_process_cache;
+        s->config.save_to_json(std::string(path), name, "User", SoftFever_VERSION);
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("export_config: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("export_config: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_import_config(orca_session_t *s, const char *path)
+{
+    if (!s || !path || !*path)
+        return -1;
+    s->clear_error();
+    try {
+        ensure_default_config(s);
+        std::map<std::string, std::string> key_values;
+        std::string reason;
+        ConfigSubstitutionContext ctx(ForwardCompatibilitySubstitutionRule::Enable);
+        int rc = s->config.load_from_json(std::string(path), ctx, true, key_values, reason);
+        if (rc != 0) {
+            s->set_error(reason.empty() ? "import_config failed" : reason);
+            return -2;
+        }
+        s->has_config = true;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("import_config: ") + ex.what());
+        return -3;
+    } catch (...) {
+        s->set_error("import_config: unknown error");
+        return -3;
+    }
+}
+
+int orca_session_import_user_preset(orca_session_t *s, const char *path, int kind)
+{
+    if (!s || !path || !*path)
+        return -1;
+    if (kind != 0 && kind != 1) {
+        s->set_error("import_user_preset kind must be 0=process or 1=filament");
+        return -2;
+    }
+    s->clear_error();
+    try {
+        fs::path src(path);
+        if (!fs::exists(src) || !fs::is_regular_file(src)) {
+            s->set_error("preset file not found");
+            return -3;
+        }
+        std::string stem = src.stem().string();
+        std::string safe = orca_session::sanitize_preset_name(stem.c_str());
+        if (safe.empty())
+            safe = kind == 0 ? "Imported Process" : "Imported Filament";
+        fs::path dest_dir = kind == 0 ? s->user_process_dir() : s->user_filament_dir();
+        fs::create_directories(dest_dir);
+        fs::path dest = dest_dir / (safe + ".json");
+        // Load via official API then re-save into user_presets catalog
+        ensure_default_config(s);
+        std::map<std::string, std::string> key_values;
+        std::string reason;
+        ConfigSubstitutionContext ctx(ForwardCompatibilitySubstitutionRule::Enable);
+        int rc = s->config.load_from_json(src.string(), ctx, true, key_values, reason);
+        if (rc != 0) {
+            s->set_error(reason.empty() ? "import preset load failed" : reason);
+            return -5;
+        }
+        s->has_config = true;
+        s->config.save_to_json(dest.string(), safe, "User", SoftFever_VERSION);
+        if (kind == 0) {
+            s->scan_user_process_presets();
+            s->refresh_name_caches();
+            s->selected_process_cache = safe;
+            s->active_process_from_user = true;
+            return 0;
+        } else {
+            s->scan_user_filament_presets();
+            s->refresh_name_caches();
+            s->selected_filament_cache = safe;
+            s->active_filament_from_user = true;
+            return 0;
+        }
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("import_user_preset: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("import_user_preset: unknown error");
+        return -4;
+    }
+}
+
+int orca_session_clone_grid(orca_session_t *s, int index, int nx, int ny, float spacing_mm)
+{
+    if (!s || !s->has_model || index < 0 || index >= int(s->model.objects.size()))
+        return -1;
+    if (nx < 1 || ny < 1 || nx > 20 || ny > 20) {
+        s->set_error("clone_grid: nx/ny must be 1..20");
+        return -2;
+    }
+    s->clear_error();
+    try {
+        ModelObject *src = s->model.objects[size_t(index)];
+        if (!src)
+            return -3;
+        const float spacing = spacing_mm > 0.f ? spacing_mm : 15.f;
+        // Keep original at (0,0) relative offsets; add (nx*ny - 1) clones
+        for (int iy = 0; iy < ny; ++iy) {
+            for (int ix = 0; ix < nx; ++ix) {
+                if (ix == 0 && iy == 0)
+                    continue;
+                ModelObject *dup = s->model.add_object(*src);
+                if (!dup)
+                    continue;
+                const Vec3d delta(double(ix) * spacing, double(iy) * spacing, 0.0);
+                for (ModelInstance *inst : dup->instances) {
+                    if (!inst) continue;
+                    inst->set_offset(inst->get_offset() + delta);
+                }
+                dup->name = src->name + " [" + std::to_string(ix) + "," + std::to_string(iy) + "]";
+                dup->invalidate_bounding_box();
+                dup->ensure_on_bed();
+            }
+        }
+        // Nest onto bed if many clones (reuse official arrange path)
+        try {
+            Points bedpts = get_bed_shape(s->config);
+            if (bedpts.size() >= 3) {
+                BoundingBox bedbb = get_extents(bedpts);
+                arrangement::ArrangeParams params;
+                params.min_obj_distance = scaled(6.);
+                params.accuracy = 0.65f;
+                params.parallel = true;
+                auto vfn = [](arrangement::ArrangePolygon &ap) {
+                    if (ap.bed_idx == arrangement::UNARRANGED)
+                        ap.bed_idx = 0;
+                };
+                arrange_objects(s->model, bedbb, params, vfn);
+                for (ModelObject *obj : s->model.objects) {
+                    if (!obj) continue;
+                    obj->invalidate_bounding_box();
+                    obj->ensure_on_bed();
+                }
+            }
+        } catch (...) {
+            // arrange optional — grid offsets still valid
+        }
+        return int(s->model.objects.size());
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("clone_grid: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("clone_grid: unknown error");
+        return -4;
+    }
+}
+
+int orca_session_mesh_stats(
+    orca_session_t *s, int index,
+    int *facets, int *open_edges, int *parts, float *volume_mm3)
+{
+    if (!s || !s->has_model)
+        return -1;
+    s->clear_error();
+    try {
+        TriangleMeshStats st;
+        if (index < 0) {
+            for (ModelObject *obj : s->model.objects) {
+                if (!obj) continue;
+                st = st.merge(obj->get_object_stl_stats());
+            }
+        } else {
+            if (index >= int(s->model.objects.size()))
+                return -2;
+            ModelObject *obj = s->model.objects[size_t(index)];
+            if (!obj)
+                return -2;
+            st = obj->get_object_stl_stats();
+        }
+        if (facets) *facets = int(st.number_of_facets);
+        if (open_edges) *open_edges = st.open_edges;
+        if (parts) *parts = st.number_of_parts;
+        if (volume_mm3) *volume_mm3 = st.volume;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("mesh_stats: ") + ex.what());
+        return -3;
+    } catch (...) {
+        s->set_error("mesh_stats: unknown error");
+        return -3;
+    }
+}
+
+int orca_session_repair_mesh(orca_session_t *s, int index)
+{
+    if (!s || !s->has_model)
+        return -1;
+    s->clear_error();
+    try {
+        std::vector<int> indices;
+        if (index < 0) {
+            for (int i = 0; i < int(s->model.objects.size()); ++i)
+                indices.push_back(i);
+        } else {
+            if (index >= int(s->model.objects.size()))
+                return -2;
+            indices.push_back(index);
+        }
+        int repaired_vols = 0;
+        std::string last_err;
+        for (int oi : indices) {
+            ModelObject *obj = s->model.objects[size_t(oi)];
+            if (!obj) continue;
+            for (ModelVolume *vol : obj->volumes) {
+                if (!vol || !vol->is_model_part())
+                    continue;
+                TriangleMesh mesh = vol->mesh();
+                RepairedMeshErrors errs;
+                std::string err;
+                if (MeshBoolean::cgal::repair(mesh, &errs, &err)) {
+                    vol->set_mesh(std::move(mesh));
+                    vol->calculate_convex_hull();
+                    vol->invalidate_convex_hull_2d();
+                    ++repaired_vols;
+                } else if (!err.empty()) {
+                    last_err = err;
+                }
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+        }
+        if (repaired_vols == 0 && !last_err.empty()) {
+            s->set_error(std::string("repair: ") + last_err);
+            return -3;
+        }
+        // Success even if already manifold (0 vols changed)
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("repair_mesh: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("repair_mesh: unknown error");
+        return -4;
+    }
+}
+
+int orca_session_cut_object_z(
+    orca_session_t *s, int index, float z_mm, int keep_upper, int keep_lower)
+{
+    if (!s || !s->has_model || index < 0 || index >= int(s->model.objects.size()))
+        return -1;
+    if (!keep_upper && !keep_lower) {
+        s->set_error("cut: keep_upper and/or keep_lower required");
+        return -2;
+    }
+    s->clear_error();
+    try {
+        ModelObject *object = s->model.objects[size_t(index)];
+        if (!object || object->instances.empty()) {
+            s->set_error("cut: invalid object");
+            return -3;
+        }
+        const size_t instance_idx = 0;
+        const Vec3d instance_offset = object->instances[instance_idx]->get_offset();
+        ModelObjectCutAttributes attrs =
+            (keep_upper ? ModelObjectCutAttribute::KeepUpper : ModelObjectCutAttributes{}) |
+            (keep_lower ? ModelObjectCutAttribute::KeepLower : ModelObjectCutAttributes{});
+        // Official Cut plane (same as calib cut_model helper)
+        Cut cut(object, int(instance_idx),
+                Geometry::translation_transform(double(z_mm) * Vec3d::UnitZ() - instance_offset),
+                attrs);
+        const ModelObjectPtrs new_objects = cut.perform_with_plane();
+        s->model.delete_object(size_t(index));
+        for (ModelObject *mo : new_objects) {
+            if (!mo) continue;
+            ModelObject *added = s->model.add_object(*mo);
+            if (added) {
+                added->sort_volumes(true);
+                added->ensure_on_bed();
+            }
+        }
+        s->has_model = !s->model.objects.empty();
+        return int(s->model.objects.size());
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("cut_object_z: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("cut_object_z: unknown error");
+        return -4;
+    }
 }
 
 static int copy_path_to_buf(orca_session_t *s, const std::string &path, char *buf, size_t buf_len)

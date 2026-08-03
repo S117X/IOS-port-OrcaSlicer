@@ -322,6 +322,66 @@ ORCA_API int orca_session_user_process_count(orca_session_t *s);
 ORCA_API const char *orca_session_user_process_name(orca_session_t *s, int index);
 
 /**
+ * Save current session filament-related config as user filament preset JSON
+ * under data_dir/user_presets/filament/{name}.json.
+ */
+ORCA_API int orca_session_save_user_filament(orca_session_t *s, const char *name);
+
+ORCA_API int orca_session_user_filament_count(orca_session_t *s);
+ORCA_API const char *orca_session_user_filament_name(orca_session_t *s, int index);
+
+/**
+ * Export current DynamicPrintConfig to JSON path (official save_to_json).
+ * Suitable for Share / Files export.
+ */
+ORCA_API int orca_session_export_config(orca_session_t *s, const char *path);
+
+/**
+ * Import config JSON path and apply as overlay on session config.
+ * Does not write into user_presets catalog (use import_user_preset for that).
+ */
+ORCA_API int orca_session_import_config(orca_session_t *s, const char *path);
+
+/**
+ * Import a preset JSON file into user_presets and select it.
+ * kind: 0 = process, 1 = filament
+ */
+ORCA_API int orca_session_import_user_preset(
+    orca_session_t *s, const char *path, int kind);
+
+/**
+ * Clone object into an Nx × Ny grid with spacing_mm between origins, then arrange.
+ * index = source object; nx,ny >= 1 (total clones = nx*ny including original kept).
+ * @return number of objects after clone, or <0 on error
+ */
+ORCA_API int orca_session_clone_grid(
+    orca_session_t *s, int index, int nx, int ny, float spacing_mm);
+
+/**
+ * Mesh health for object index (-1 = all combined).
+ * open_edges == 0 ⇒ manifold. volume_mm3 may be NULL.
+ */
+ORCA_API int orca_session_mesh_stats(
+    orca_session_t *s, int index,
+    int *facets, int *open_edges, int *parts, float *volume_mm3);
+
+/**
+ * Attempt official MeshBoolean::repair on object volumes (CGAL).
+ * index = -1 → all objects. Updates mesh in place.
+ * @return 0 on success (partial repairs still 0 if any volume fixed)
+ */
+ORCA_API int orca_session_repair_mesh(orca_session_t *s, int index);
+
+/**
+ * Horizontal plane cut at world Z = z_mm (mm).
+ * keep_upper/keep_lower: non-zero to keep that half as separate objects.
+ * Replaces the source object with cut results (official Cut::perform_with_plane).
+ * @return number of objects after cut, or <0 on error
+ */
+ORCA_API int orca_session_cut_object_z(
+    orca_session_t *s, int index, float z_mm, int keep_upper, int keep_lower);
+
+/**
  * Path to machine cover PNG / bed texture under resources/profiles (may be empty).
  * Tries official bed_texture, then Vendor/Model_cover.png.
  */

@@ -25,6 +25,9 @@ final class OrcaEngine: ObservableObject {
     @Published var objectNames: [String] = []
     @Published var selectedObjectIndex: Int = -1 // -1 = all
     @Published var boundsText: String = ""
+    /// Model AABB Z (mm) for cut mid-height default
+    @Published var modelMinZ: Float = 0
+    @Published var modelMaxZ: Float = 0
     @Published var bedSize: SIMD2<Float> = SIMD2(220, 220)
     @Published var bedHeight: Float = 250
     /// Active process profile display name (system preset or bundled JSON id)
@@ -57,12 +60,16 @@ final class OrcaEngine: ObservableObject {
     @Published var compatibleOnly: Bool = true
     /// User-saved process preset names (also in processNames after save)
     @Published var userProcessNames: [String] = []
+    /// User-saved filament preset names
+    @Published var userFilamentNames: [String] = []
     /// File path to machine cover / bed texture for plate logo
     @Published var bedTexturePath: String?
     @Published var printerCoverPath: String?
     /// Active calibration mode (Slic3r::CalibMode raw int); 0 = none
     @Published var calibMode: Int = 0
     @Published var calibSummary: String = ""
+    /// Last mesh health report (open edges / manifold)
+    @Published var meshHealthText: String = ""
 
     private let prefsPrinterKey = "orca.lastPrinter"
     private let prefsProcessKey = "orca.lastProcess"
@@ -301,6 +308,15 @@ final class OrcaEngine: ObservableObject {
             }
         }
         userProcessNames = users
+        let ufc = Int(orca_session_user_filament_count(s))
+        var ufils: [String] = []
+        ufils.reserveCapacity(ufc)
+        for i in 0..<ufc {
+            if let c = orca_session_user_filament_name(s, Int32(i)) {
+                ufils.append(String(cString: c))
+            }
+        }
+        userFilamentNames = ufils
         compatibleOnly = orca_session_get_compatible_only(s) != 0
     }
 
@@ -433,6 +449,205 @@ final class OrcaEngine: ObservableObject {
         activeProcessProfile = trimmed
         persistSelection()
         lastMessage = "Saved user process “\(trimmed)”"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Persist current filament settings as user preset (Documents/…/user_presets/filament).
+    @discardableResult
+    func saveUserFilament(name: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else { return false }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            lastMessage = "Enter a name for the user filament"
+            return false
+        }
+        let rc = trimmed.withCString { orca_session_save_user_filament(s, $0) }
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "save user filament failed"
+            return false
+        }
+        refreshPresetLists()
+        selectedFilament = trimmed
+        persistSelection()
+        lastMessage = "Saved user filament “\(trimmed)”"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Export current DynamicPrintConfig to Documents (or given URL) as JSON.
+    @discardableResult
+    func exportConfigJSON(to url: URL? = nil) -> URL? {
+        #if ORCA_LINKED
+        guard let s = session else {
+            lastMessage = "No session"
+            return nil
+        }
+        let dest: URL
+        if let url {
+            dest = url
+        } else {
+            let name = selectedProcess.isEmpty ? "OrcaConfig" : selectedProcess
+                .replacingOccurrences(of: "/", with: "-")
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+                ?? FileManager.default.temporaryDirectory
+            dest = docs.appendingPathComponent("OrcaSlicer/exports/\(name).json")
+            try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        let rc = dest.path.withCString { orca_session_export_config(s, $0) }
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "export config failed"
+            return nil
+        }
+        lastMessage = "Exported config → \(dest.lastPathComponent)"
+        return dest
+        #else
+        lastMessage = "Not linked"
+        return nil
+        #endif
+    }
+
+    /// Import config JSON as overlay (or as user process/filament if kind set).
+    /// kind: nil = overlay only; 0 = user process; 1 = user filament
+    @discardableResult
+    func importConfigJSON(url: URL, asUserPreset kind: Int? = nil) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else { return false }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        guard let dest = copyToTemp(url) else { return false }
+        if let kind {
+            let rc = dest.path.withCString { orca_session_import_user_preset(s, $0, Int32(kind)) }
+            if rc != 0 {
+                lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "import preset failed"
+                return false
+            }
+            refreshPresetLists()
+            if kind == 0 {
+                if let c = orca_session_selected_process(s) {
+                    selectedProcess = String(cString: c)
+                    activeProcessProfile = selectedProcess
+                }
+            } else {
+                if let c = orca_session_selected_filament(s) {
+                    selectedFilament = String(cString: c)
+                }
+            }
+            persistSelection()
+            lastMessage = kind == 0
+                ? "Imported user process from \(url.lastPathComponent)"
+                : "Imported user filament from \(url.lastPathComponent)"
+            return true
+        } else {
+            let rc = dest.path.withCString { orca_session_import_config(s, $0) }
+            if rc != 0 {
+                lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "import config failed"
+                return false
+            }
+            lastMessage = "Imported config overlay from \(url.lastPathComponent)"
+            return true
+        }
+        #else
+        return false
+        #endif
+    }
+
+    // MARK: - Mesh / object ops (G14)
+
+    @discardableResult
+    func cloneGrid(nx: Int, ny: Int, spacingMm: Float = 15) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return false }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        let rc = orca_session_clone_grid(s, Int32(idx), Int32(nx), Int32(ny), spacingMm)
+        if rc < 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "clone_grid failed"
+            return false
+        }
+        refreshObjectList()
+        refreshMesh()
+        refreshBounds()
+        refreshModelInfo()
+        lastMessage = "Clone grid \(nx)×\(ny) → \(objectCount) objects"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    @discardableResult
+    func refreshMeshHealth() -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else {
+            meshHealthText = ""
+            return false
+        }
+        let idx = selectedObjectIndex >= 0 ? Int32(selectedObjectIndex) : Int32(-1)
+        var facets: Int32 = 0, openEdges: Int32 = 0, parts: Int32 = 0
+        var vol: Float = 0
+        let rc = orca_session_mesh_stats(s, idx, &facets, &openEdges, &parts, &vol)
+        if rc != 0 {
+            meshHealthText = orca_session_last_error(s).map { String(cString: $0) } ?? "stats failed"
+            return false
+        }
+        if openEdges == 0 {
+            meshHealthText = "Manifold · \(facets) facets · \(parts) part(s)"
+        } else {
+            meshHealthText = "Non-manifold · \(openEdges) open edges · \(facets) facets"
+        }
+        lastMessage = meshHealthText
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    @discardableResult
+    func repairMesh() -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return false }
+        let idx = selectedObjectIndex >= 0 ? Int32(selectedObjectIndex) : Int32(-1)
+        let rc = orca_session_repair_mesh(s, idx)
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "repair failed"
+            _ = refreshMeshHealth()
+            return false
+        }
+        refreshMesh()
+        refreshBounds()
+        refreshModelInfo()
+        _ = refreshMeshHealth()
+        lastMessage = "Repair done · \(meshHealthText)"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Horizontal plane cut at world Z (mm). keep both halves by default.
+    @discardableResult
+    func cutObjectZ(_ zMm: Float, keepUpper: Bool = true, keepLower: Bool = true) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return false }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        let rc = orca_session_cut_object_z(
+            s, Int32(idx), zMm, keepUpper ? 1 : 0, keepLower ? 1 : 0
+        )
+        if rc < 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "cut failed"
+            return false
+        }
+        selectedObjectIndex = -1
+        refreshObjectList()
+        refreshMesh()
+        refreshBounds()
+        refreshModelInfo()
+        lastMessage = String(format: "Cut at Z=%.2f mm → %d object(s)", zMm, objectCount)
         return true
         #else
         return false
@@ -742,11 +957,15 @@ final class OrcaEngine: ObservableObject {
         #if ORCA_LINKED
         guard let s = session, hasModel else {
             boundsText = ""
+            modelMinZ = 0
+            modelMaxZ = 0
             return
         }
         var minx: Float = 0, miny: Float = 0, minz: Float = 0
         var maxx: Float = 0, maxy: Float = 0, maxz: Float = 0
         if orca_session_model_bounds(s, &minx, &miny, &minz, &maxx, &maxy, &maxz) == 0 {
+            modelMinZ = minz
+            modelMaxZ = maxz
             boundsText = String(
                 format: "BB %.1f×%.1f×%.1f mm",
                 maxx - minx, maxy - miny, maxz - minz

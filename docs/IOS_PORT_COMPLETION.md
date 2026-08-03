@@ -89,14 +89,14 @@ Last updated: 2026-08-03 — expanded from v1 daily-driver to **full port (100%)
 
 ### G13 — Files & presets
 - [x] Recent models list
-- [ ] Export current config JSON
-- [ ] Import user filament/process from Files
-- [ ] Save user filament preset (not only process)
+- [x] Export current config JSON
+- [x] Import user filament/process from Files
+- [x] Save user filament preset (not only process)
 
 ### G14 — Mesh / object ops
-- [ ] Simple plane cut (split object)
-- [ ] Repair / manifold hint (or report non-manifold)
-- [ ] Clone grid (NxM duplicates + arrange)
+- [x] Simple plane cut (split object)
+- [x] Repair / manifold hint (or report non-manifold)
+- [x] Clone grid (NxM duplicates + arrange)
 
 ### G15 — Preview / analysis
 - [ ] Layer time estimate display
