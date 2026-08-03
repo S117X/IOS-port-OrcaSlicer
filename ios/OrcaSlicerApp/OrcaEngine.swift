@@ -86,6 +86,10 @@ final class OrcaEngine: ObservableObject {
     @Published var lastPaintCount: Int = 0
     /// Running total for active paint kind (any non-NONE)
     @Published var paintStatsText: String = ""
+    /// Brim ear count for active object (W1)
+    @Published var brimEarCount: Int = 0
+    /// Second object index for mesh boolean (W2); -1 = auto next/prev
+    @Published var booleanOtherObjectIndex: Int = -1
 
     private let prefsPrinterKey = "orca.lastPrinter"
     private let prefsProcessKey = "orca.lastProcess"
@@ -2084,5 +2088,225 @@ final class OrcaEngine: ObservableObject {
         paintOverlayMesh = nil
         paintStatsText = ""
         lastPaintCount = 0
+        brimEarCount = 0
+    }
+
+    // MARK: - wx-parity W1: brim ears (point markers → ModelObject::brim_points)
+
+    /// Place a brim ear at world XY (desktop GLGizmoBrimEars). radiusMm ≤ 0 → auto.
+    @discardableResult
+    func brimEarAdd(x: Float, y: Float, radiusMm: Float = 0, recordUndo: Bool = true) -> Int {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return -1 }
+        if recordUndo { pushUndoSnapshot(label: "brim-ear-add") }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        let n = orca_session_brim_ear_add(s, Int32(idx), x, y, radiusMm)
+        if n >= 0 {
+            brimEarCount = Int(n)
+            // Ensure process uses painted ears
+            setOption("brim_type", value: "painted")
+            refreshBrimEarOverlay()
+            lastMessage = "Brim ear #\(n) @ (\(String(format: "%.1f", x)), \(String(format: "%.1f", y)))"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "brim ear add failed"
+        }
+        return Int(n)
+        #else
+        return -1
+        #endif
+    }
+
+    /// Remove nearest brim ear within maxDistMm of world XY.
+    @discardableResult
+    func brimEarRemoveNearest(x: Float, y: Float, maxDistMm: Float = 8, recordUndo: Bool = true) -> Int {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return -1 }
+        if recordUndo { pushUndoSnapshot(label: "brim-ear-remove") }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        let n = orca_session_brim_ear_remove_nearest(s, Int32(idx), x, y, maxDistMm)
+        if n >= 0 {
+            brimEarCount = Int(n)
+            refreshBrimEarOverlay()
+            lastMessage = "Brim ears remaining: \(n)"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "brim ear remove failed"
+        }
+        return Int(n)
+        #else
+        return -1
+        #endif
+    }
+
+    @discardableResult
+    func brimEarClear(allObjects: Bool = false) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return false }
+        pushUndoSnapshot(label: "brim-ear-clear")
+        let idx: Int32 = allObjects ? -1 : Int32(selectedObjectIndex >= 0 ? selectedObjectIndex : 0)
+        let rc = orca_session_brim_ear_clear(s, idx)
+        if rc == 0 {
+            brimEarCount = 0
+            paintOverlayMesh = nil
+            lastMessage = "Cleared brim ears"
+            return true
+        }
+        lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "brim ear clear failed"
+        return false
+        #else
+        return false
+        #endif
+    }
+
+    func refreshBrimEarCount() {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else {
+            brimEarCount = 0
+            return
+        }
+        let idx = selectedObjectIndex >= 0 ? Int32(selectedObjectIndex) : Int32(-1)
+        var count: Int32 = 0
+        if orca_session_brim_ear_count(s, idx, &count) == 0 {
+            brimEarCount = Int(count)
+            paintStatsText = "Brim ears · \(count) marker(s)"
+        }
+        #endif
+    }
+
+    func refreshBrimEarOverlay() {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else {
+            paintOverlayMesh = nil
+            return
+        }
+        let idx = selectedObjectIndex >= 0 ? Int32(selectedObjectIndex) : Int32(-1)
+        var posPtr: UnsafeMutablePointer<Float>?
+        var idxPtr: UnsafeMutablePointer<UInt32>?
+        var vcount: Int = 0
+        var icount: Int = 0
+        let rc = orca_session_export_brim_ear_mesh(
+            s, idx, &posPtr, &vcount, &idxPtr, &icount
+        )
+        defer {
+            if let p = posPtr { orca_free(p) }
+            if let i = idxPtr { orca_free(i) }
+        }
+        refreshBrimEarCount()
+        guard rc == 0, let posPtr, let idxPtr, vcount > 0, icount > 0 else {
+            paintOverlayMesh = nil
+            return
+        }
+        var positions = [Float](repeating: 0, count: vcount * 3)
+        var indices = [UInt32](repeating: 0, count: icount)
+        for i in 0..<(vcount * 3) { positions[i] = posPtr[i] }
+        for i in 0..<icount { indices[i] = idxPtr[i] }
+        var bmin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var bmax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        for i in 0..<vcount {
+            let p = SIMD3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])
+            bmin = min(bmin, p)
+            bmax = max(bmax, p)
+        }
+        paintOverlayMesh = MeshGeometry(positions: positions, indices: indices, min: bmin, max: bmax)
+        #else
+        paintOverlayMesh = nil
+        #endif
+    }
+
+    // MARK: - wx-parity W2: mesh boolean / simplify / plane cut
+
+    /// op: 0=union, 1=difference (A−B), 2=intersection. Deletes B by default.
+    @discardableResult
+    func meshBoolean(objectA: Int? = nil, objectB: Int? = nil, op: Int, deleteB: Bool = true) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel, objectCount >= 2 else {
+            lastMessage = "Boolean needs ≥2 objects"
+            return false
+        }
+        let a = objectA ?? (selectedObjectIndex >= 0 ? selectedObjectIndex : 0)
+        var b = objectB ?? booleanOtherObjectIndex
+        if b < 0 || b == a {
+            b = (a + 1) % objectCount
+        }
+        if b == a {
+            lastMessage = "Boolean: pick a different second object"
+            return false
+        }
+        pushUndoSnapshot(label: "mesh-boolean-\(op)")
+        let rc = orca_session_mesh_boolean(s, Int32(a), Int32(b), Int32(op), deleteB ? 1 : 0)
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "boolean failed"
+            return false
+        }
+        selectedObjectIndex = min(a, objectCount - 2) // B deleted may shift indices
+        refreshObjectList()
+        refreshMesh()
+        refreshBounds()
+        refreshModelInfo()
+        let opName = op == 0 ? "Union" : (op == 1 ? "Difference" : "Intersect")
+        lastMessage = "\(opName) → \(objectCount) object(s)"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Simplify selected object (targetFaces 0 = ~50%).
+    @discardableResult
+    func simplifyMesh(targetFaces: Int = 0) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return false }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        pushUndoSnapshot(label: "simplify-mesh")
+        let n = orca_session_simplify_mesh(s, Int32(idx), Int32(targetFaces))
+        if n < 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "simplify failed"
+            return false
+        }
+        refreshMesh()
+        refreshBounds()
+        refreshModelInfo()
+        _ = refreshMeshHealth()
+        lastMessage = "Simplified → \(n) triangles"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Plane cut with arbitrary normal (world mm). Default normal = +Z (horizontal).
+    @discardableResult
+    func cutObjectPlane(
+        point: SIMD3<Float>,
+        normal: SIMD3<Float> = SIMD3(0, 0, 1),
+        keepUpper: Bool = true,
+        keepLower: Bool = true
+    ) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return false }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        pushUndoSnapshot(label: "cut-plane")
+        let rc = orca_session_cut_object_plane(
+            s, Int32(idx),
+            point.x, point.y, point.z,
+            normal.x, normal.y, normal.z,
+            keepUpper ? 1 : 0, keepLower ? 1 : 0
+        )
+        if rc < 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "plane cut failed"
+            return false
+        }
+        selectedObjectIndex = -1
+        refreshObjectList()
+        refreshMesh()
+        refreshBounds()
+        refreshModelInfo()
+        lastMessage = String(
+            format: "Plane cut n=(%.1f,%.1f,%.1f) → %d object(s)",
+            normal.x, normal.y, normal.z, objectCount
+        )
+        return true
+        #else
+        return false
+        #endif
     }
 }

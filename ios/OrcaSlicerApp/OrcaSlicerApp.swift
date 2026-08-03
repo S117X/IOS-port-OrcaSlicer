@@ -74,6 +74,7 @@ struct OrcaRootView: View {
         case paintSeam = "Seam paint"
         case paintMMU = "MMU paint"
         case paintFuzzy = "Fuzzy paint"
+        case paintBrimEars = "Brim ears"
     }
 
     @State private var gizmoMode: GizmoMode = .select
@@ -92,8 +93,19 @@ struct OrcaRootView: View {
     @State private var paintBrushRadius: Float = 2.0
     @State private var paintMMUExtruder: Int = 1
     @State private var paintStrokeNeedsUndo = true
+    /// Brim ear radius (mm); 0 = engine auto default
+    @State private var brimEarRadius: Float = 5.0
+    /// Brim ear tool: add vs remove nearest
+    @State private var brimEarErase = false
 
     private var isPaintGizmo: Bool {
+        switch gizmoMode {
+        case .paintSupport, .paintSeam, .paintMMU, .paintFuzzy, .paintBrimEars: return true
+        default: return false
+        }
+    }
+
+    private var isFacetPaintGizmo: Bool {
         switch gizmoMode {
         case .paintSupport, .paintSeam, .paintMMU, .paintFuzzy: return true
         default: return false
@@ -116,6 +128,7 @@ struct OrcaRootView: View {
         case .paintSeam: return UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 0.88)
         case .paintMMU: return UIColor(red: 0.45, green: 0.45, blue: 1.0, alpha: 0.88)
         case .paintFuzzy: return UIColor(red: 0.85, green: 0.35, blue: 0.85, alpha: 0.88)
+        case .paintBrimEars: return UIColor(red: 1.0, green: 0.75, blue: 0.15, alpha: 0.92)
         default: return UIColor(red: 0.2, green: 0.85, blue: 0.35, alpha: 0.85)
         }
     }
@@ -1749,7 +1762,11 @@ struct OrcaRootView: View {
                             measurePointB = nil
                             measureDistanceText = ""
                         }
-                        if let kind = paintKind(for: mode) {
+                        if mode == .paintBrimEars {
+                            brimEarErase = false
+                            engine.refreshBrimEarOverlay()
+                            status = "Brim ears: tap plate to place · r=\(String(format: "%.1f", brimEarRadius)) mm"
+                        } else if let kind = paintKind(for: mode) {
                             paintStrokeNeedsUndo = true
                             engine.refreshPaintOverlay(kind: kind)
                             engine.refreshPaintStats(kind: kind)
@@ -1776,8 +1793,11 @@ struct OrcaRootView: View {
                         engine.scale(factor: 1.1); status = engine.lastMessage
                     }
                 }
-                if isPaintGizmo {
+                if isFacetPaintGizmo {
                     paintToolChips
+                }
+                if gizmoMode == .paintBrimEars {
+                    brimEarToolChips
                 }
                 toolChip("Center", "scope") { engine.centerOnBed(); status = engine.lastMessage }
                 toolChip("Arrange", "square.grid.2x2") {
@@ -1893,6 +1913,31 @@ struct OrcaRootView: View {
         }
     }
 
+    @ViewBuilder
+    private var brimEarToolChips: some View {
+        Group {
+            toolChip("Add", "plus.circle", selected: !brimEarErase) {
+                brimEarErase = false
+                status = "Brim ear: tap to place"
+            }
+            toolChip("Remove", "minus.circle", selected: brimEarErase) {
+                brimEarErase = true
+                status = "Brim ear: tap near marker to remove"
+            }
+            toolChip("R \(String(format: "%.0f", brimEarRadius))", "circle.dashed") {
+                if brimEarRadius < 3 { brimEarRadius = 5 }
+                else if brimEarRadius < 7 { brimEarRadius = 8 }
+                else if brimEarRadius < 12 { brimEarRadius = 12 }
+                else { brimEarRadius = 3 }
+                status = String(format: "Brim ear radius %.0f mm", brimEarRadius)
+            }
+            toolChip("Clear", "trash") {
+                _ = engine.brimEarClear()
+                status = engine.lastMessage
+            }
+        }
+    }
+
     private var gizmoStatusBadges: some View {
         VStack(alignment: .trailing, spacing: 6) {
             if (moveMode || gizmoMode == .move) && mainTab == .prepare && engine.hasModel {
@@ -1914,9 +1959,13 @@ struct OrcaRootView: View {
                     .clipShape(Capsule())
             }
             if isPaintGizmo && mainTab == .prepare {
-                Text(engine.paintStatsText.isEmpty
-                     ? "\(gizmoMode.rawValue) · r=\(String(format: "%.0f", paintBrushRadius)) mm"
-                     : engine.paintStatsText)
+                let fallback: String = {
+                    if gizmoMode == .paintBrimEars {
+                        return "Brim ears · \(engine.brimEarCount) · r=\(String(format: "%.0f", brimEarRadius)) mm"
+                    }
+                    return "\(gizmoMode.rawValue) · r=\(String(format: "%.0f", paintBrushRadius)) mm"
+                }()
+                Text(engine.paintStatsText.isEmpty ? fallback : engine.paintStatsText)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(OrcaTheme.accent)
                     .padding(.horizontal, 10)
@@ -1945,6 +1994,17 @@ struct OrcaRootView: View {
     }
 
     private func handlePaintHit(_ pt: SIMD3<Float>, isBegin: Bool) {
+        if gizmoMode == .paintBrimEars {
+            // Point markers: only act on stroke begin (tap), not drag samples
+            guard isBegin else { return }
+            if brimEarErase {
+                _ = engine.brimEarRemoveNearest(x: pt.x, y: pt.y, maxDistMm: max(brimEarRadius * 2, 8))
+            } else {
+                _ = engine.brimEarAdd(x: pt.x, y: pt.y, radiusMm: brimEarRadius)
+            }
+            status = engine.lastMessage
+            return
+        }
         guard let kind = activePaintKind else { return }
         if isBegin { paintStrokeNeedsUndo = true }
         let record = paintStrokeNeedsUndo
@@ -1982,6 +2042,7 @@ struct OrcaRootView: View {
         case .paintSeam: return "line.diagonal"
         case .paintMMU: return "paintpalette"
         case .paintFuzzy: return "scribble.variable"
+        case .paintBrimEars: return "circle.bottomhalf.filled"
         }
     }
 
@@ -2282,6 +2343,9 @@ struct OrcaRootView: View {
     @State private var cloneNx = "2"
     @State private var cloneNy = "2"
     @State private var cutZText = ""
+    @State private var simplifyTargetFaces = ""
+    @State private var cutPlaneTilt = "0" // degrees from horizontal about X
+    @State private var booleanOtherText = ""
     // Calibration sheet fields
     @State private var calibTempStart = "230"
     @State private var calibTempEnd = "190"
@@ -2874,10 +2938,105 @@ struct OrcaRootView: View {
                             .foregroundStyle(OrcaTheme.accent)
                         }
                         .listRowBackground(OrcaTheme.panel)
+
+                        HStack {
+                            Text("Tilt ° (X)")
+                                .foregroundStyle(OrcaTheme.muted)
+                            TextField("0", text: $cutPlaneTilt)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .foregroundStyle(OrcaTheme.text)
+                                .frame(width: 48)
+                            Button("Plane cut") {
+                                let zCut: Float
+                                if let v = Float(cutZText), v.isFinite {
+                                    zCut = v
+                                } else {
+                                    zCut = (engine.modelMinZ + engine.modelMaxZ) * 0.5
+                                }
+                                let tiltDeg = Float(cutPlaneTilt) ?? 0
+                                let tilt = tiltDeg * .pi / 180
+                                // Normal tilted about X: (0, -sin, cos) so 0° = +Z horizontal cut
+                                let n = SIMD3<Float>(0, -sin(tilt), cos(tilt))
+                                let midX = (engine.bedSize.x) * 0.5
+                                let midY = (engine.bedSize.y) * 0.5
+                                if engine.cutObjectPlane(
+                                    point: SIMD3(midX, midY, zCut),
+                                    normal: n
+                                ) {
+                                    status = engine.lastMessage
+                                } else {
+                                    status = engine.lastMessage
+                                }
+                            }
+                            .fontWeight(.bold)
+                            .foregroundStyle(OrcaTheme.accent)
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+
+                        HStack {
+                            Text("Simplify faces")
+                                .foregroundStyle(OrcaTheme.muted)
+                            TextField("50%", text: $simplifyTargetFaces)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .foregroundStyle(OrcaTheme.text)
+                            Button("Simplify") {
+                                let t = Int(simplifyTargetFaces) ?? 0
+                                if engine.simplifyMesh(targetFaces: t) {
+                                    status = engine.lastMessage
+                                } else {
+                                    status = engine.lastMessage
+                                }
+                            }
+                            .fontWeight(.bold)
+                            .foregroundStyle(OrcaTheme.accent)
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+
+                        if engine.objectCount >= 2 {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Boolean other #")
+                                        .foregroundStyle(OrcaTheme.muted)
+                                    TextField("auto", text: $booleanOtherText)
+                                        .keyboardType(.numberPad)
+                                        .multilineTextAlignment(.trailing)
+                                        .foregroundStyle(OrcaTheme.text)
+                                        .frame(width: 48)
+                                        .onChange(of: booleanOtherText) { v in
+                                            if let n = Int(v), n >= 1 {
+                                                engine.booleanOtherObjectIndex = n - 1
+                                            } else {
+                                                engine.booleanOtherObjectIndex = -1
+                                            }
+                                        }
+                                }
+                                HStack(spacing: 12) {
+                                    Button("Union") {
+                                        _ = engine.meshBoolean(op: 0)
+                                        status = engine.lastMessage
+                                    }
+                                    .foregroundStyle(OrcaTheme.accent)
+                                    Button("A − B") {
+                                        _ = engine.meshBoolean(op: 1)
+                                        status = engine.lastMessage
+                                    }
+                                    .foregroundStyle(OrcaTheme.accent)
+                                    Button("Intersect") {
+                                        _ = engine.meshBoolean(op: 2)
+                                        status = engine.lastMessage
+                                    }
+                                    .foregroundStyle(OrcaTheme.accent)
+                                }
+                                .fontWeight(.semibold)
+                            }
+                            .listRowBackground(OrcaTheme.panel)
+                        }
                     } header: {
                         Text("Mesh / object ops")
                     } footer: {
-                        Text("Clone grid uses official arrange. Cut is horizontal plane (KeepUpper+KeepLower). Repair reports open edges.")
+                        Text("Clone · horizontal/tilted plane cut · CGAL repair · quadric simplify · mcut boolean (needs ≥2 objects). Brim ears gizmo paints ModelObject::brim_points.")
                             .font(.system(size: 11))
                     }
                 }

@@ -38,6 +38,8 @@
 #include "libslic3r/MeshBoolean.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/TriangleSelector.hpp"
+#include "libslic3r/BrimEarsPoint.hpp"
+#include "libslic3r/QuadricEdgeCollapse.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -2941,6 +2943,483 @@ int orca_session_export_paint_mesh(
         return -5;
     } catch (...) {
         s->set_error("export_paint_mesh: unknown error");
+        return -5;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W1: Brim ears (ModelObject::brim_points — point markers, not facets)
+// ---------------------------------------------------------------------------
+
+static Transform3d object_instance_matrix(const ModelObject *obj)
+{
+    if (obj && !obj->instances.empty() && obj->instances[0])
+        return obj->instances[0]->get_transformation().get_matrix();
+    return Transform3d::Identity();
+}
+
+static float brim_ear_default_radius(const orca_session_t *s)
+{
+    // Desktop: initial_layer_line_width * nozzle * 8, clamped 0.1–100.
+    // Fallback 5 mm when config incomplete.
+    double nozzle = 0.4;
+    if (s->config.has("nozzle_diameter")) {
+        if (const auto *opt = s->config.option<ConfigOptionFloats>("nozzle_diameter")) {
+            if (!opt->values.empty())
+                nozzle = opt->values.front();
+        }
+    }
+    double ilw = nozzle;
+    if (s->config.has("initial_layer_line_width")) {
+        try {
+            ilw = s->config.get_abs_value("initial_layer_line_width", nozzle);
+        } catch (...) {
+            ilw = nozzle;
+        }
+    }
+    return std::clamp(float(ilw * 8.0), 0.1f, 100.f);
+}
+
+static void ensure_brim_type_painted(orca_session_t *s, ModelObject *obj)
+{
+    // Prefer object-level + global brim_type=painted so MakeBrim uses brim_points.
+    ConfigSubstitutionContext ctx(ForwardCompatibilitySubstitutionRule::Enable);
+    if (obj)
+        obj->config.set_deserialize("brim_type", "painted", ctx);
+    s->config.set_deserialize("brim_type", "painted", ctx);
+}
+
+int orca_session_brim_ear_add(
+    orca_session_t *s, int object_index,
+    float world_x, float world_y, float radius_mm)
+{
+    if (!s || !s->has_model)
+        return -1;
+    if (object_index < 0)
+        object_index = 0;
+    if (object_index >= int(s->model.objects.size())) {
+        s->set_error("brim_ear_add: bad object index");
+        return -2;
+    }
+    try {
+        ModelObject *obj = s->model.objects[size_t(object_index)];
+        if (!obj || obj->instances.empty()) {
+            s->set_error("brim_ear_add: invalid object");
+            return -3;
+        }
+        if (radius_mm <= 0.f)
+            radius_mm = brim_ear_default_radius(s);
+
+        const Transform3d trsf = object_instance_matrix(obj);
+        // Desktop: place ear on bed plane (world z ≈ 0−), then store object-space.
+        Vec3d world_pos(double(world_x), double(world_y), -0.0001);
+        Vec3d object_pos = trsf.inverse() * world_pos;
+        obj->brim_points.emplace_back(
+            float(object_pos.x()), float(object_pos.y()), float(object_pos.z()),
+            radius_mm);
+        ensure_brim_type_painted(s, obj);
+        return int(obj->brim_points.size());
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("brim_ear_add: ") + ex.what());
+        return -4;
+    }
+}
+
+int orca_session_brim_ear_remove_nearest(
+    orca_session_t *s, int object_index,
+    float world_x, float world_y, float max_dist_mm)
+{
+    if (!s || !s->has_model)
+        return -1;
+    if (object_index < 0)
+        object_index = 0;
+    if (object_index >= int(s->model.objects.size()))
+        return -2;
+    if (max_dist_mm <= 0.f)
+        max_dist_mm = 5.f;
+    try {
+        ModelObject *obj = s->model.objects[size_t(object_index)];
+        if (!obj)
+            return -3;
+        const Transform3d trsf = object_instance_matrix(obj);
+        const float max_d2 = max_dist_mm * max_dist_mm;
+        int best = -1;
+        float best_d2 = max_d2;
+        for (int i = 0; i < int(obj->brim_points.size()); ++i) {
+            // BrimPoint::transform is non-const; apply matrix manually
+            const Vec3d w = trsf * obj->brim_points[size_t(i)].pos.cast<double>();
+            const float dx = float(w.x()) - world_x;
+            const float dy = float(w.y()) - world_y;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 <= best_d2) {
+                best_d2 = d2;
+                best = i;
+            }
+        }
+        if (best < 0)
+            return int(obj->brim_points.size()); // nothing removed
+        obj->brim_points.erase(obj->brim_points.begin() + best);
+        return int(obj->brim_points.size());
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("brim_ear_remove: ") + ex.what());
+        return -4;
+    }
+}
+
+int orca_session_brim_ear_clear(orca_session_t *s, int object_index)
+{
+    if (!s || !s->has_model)
+        return -1;
+    try {
+        if (object_index < 0) {
+            for (ModelObject *obj : s->model.objects)
+                if (obj)
+                    obj->brim_points.clear();
+        } else {
+            if (object_index >= int(s->model.objects.size()))
+                return -2;
+            if (ModelObject *obj = s->model.objects[size_t(object_index)])
+                obj->brim_points.clear();
+        }
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("brim_ear_clear: ") + ex.what());
+        return -3;
+    }
+}
+
+int orca_session_brim_ear_count(orca_session_t *s, int object_index, int *count)
+{
+    if (!s || !count)
+        return -1;
+    *count = 0;
+    if (!s->has_model)
+        return 0;
+    try {
+        if (object_index < 0) {
+            for (const ModelObject *obj : s->model.objects)
+                if (obj)
+                    *count += int(obj->brim_points.size());
+        } else {
+            if (object_index >= int(s->model.objects.size()))
+                return -2;
+            if (const ModelObject *obj = s->model.objects[size_t(object_index)])
+                *count = int(obj->brim_points.size());
+        }
+        return 0;
+    } catch (...) {
+        return -3;
+    }
+}
+
+int orca_session_brim_ear_list(
+    orca_session_t *s, int object_index,
+    float **out_xyzr, size_t *count)
+{
+    if (!s || !out_xyzr || !count)
+        return -1;
+    *out_xyzr = nullptr;
+    *count = 0;
+    if (!s->has_model)
+        return 0;
+    try {
+        std::vector<float> flat;
+        auto acc = [&](ModelObject *obj) {
+            if (!obj)
+                return;
+            const Transform3d trsf = object_instance_matrix(obj);
+            for (const BrimPoint &bp : obj->brim_points) {
+                const Vec3d w = trsf * bp.pos.cast<double>();
+                flat.push_back(float(w.x()));
+                flat.push_back(float(w.y()));
+                flat.push_back(float(w.z()));
+                flat.push_back(bp.head_front_radius);
+            }
+        };
+        if (object_index < 0) {
+            for (ModelObject *obj : s->model.objects)
+                acc(obj);
+        } else {
+            if (object_index >= int(s->model.objects.size()))
+                return -2;
+            acc(s->model.objects[size_t(object_index)]);
+        }
+        if (flat.empty())
+            return 0;
+        auto *p = static_cast<float *>(std::malloc(flat.size() * sizeof(float)));
+        if (!p) {
+            s->set_error("brim_ear_list: oom");
+            return -3;
+        }
+        std::memcpy(p, flat.data(), flat.size() * sizeof(float));
+        *out_xyzr = p;
+        *count = flat.size() / 4;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("brim_ear_list: ") + ex.what());
+        return -4;
+    }
+}
+
+int orca_session_export_brim_ear_mesh(
+    orca_session_t *s, int object_index,
+    float **out_positions, size_t *out_vertex_count,
+    uint32_t **out_indices, size_t *out_index_count)
+{
+    if (!s || !out_positions || !out_vertex_count || !out_indices || !out_index_count)
+        return -1;
+    *out_positions = nullptr;
+    *out_indices = nullptr;
+    *out_vertex_count = 0;
+    *out_index_count = 0;
+    if (!s->has_model)
+        return 0;
+    try {
+        std::vector<float> pos;
+        std::vector<uint32_t> idx;
+        constexpr int N = 16; // disc sides
+        auto add_disc = [&](float cx, float cy, float cz, float r) {
+            const uint32_t base = uint32_t(pos.size() / 3);
+            // center + ring
+            pos.push_back(cx);
+            pos.push_back(cy);
+            pos.push_back(cz + 0.05f);
+            for (int i = 0; i < N; ++i) {
+                const double a = 2.0 * M_PI * i / N;
+                pos.push_back(cx + r * float(std::cos(a)));
+                pos.push_back(cy + r * float(std::sin(a)));
+                pos.push_back(cz + 0.05f);
+            }
+            for (int i = 0; i < N; ++i) {
+                idx.push_back(base);
+                idx.push_back(base + 1 + uint32_t(i));
+                idx.push_back(base + 1 + uint32_t((i + 1) % N));
+            }
+        };
+        auto acc = [&](ModelObject *obj) {
+            if (!obj)
+                return;
+            const Transform3d trsf = object_instance_matrix(obj);
+            for (const BrimPoint &bp : obj->brim_points) {
+                const Vec3d w = trsf * bp.pos.cast<double>();
+                add_disc(float(w.x()), float(w.y()), 0.f, std::max(0.2f, bp.head_front_radius));
+            }
+        };
+        if (object_index < 0) {
+            for (ModelObject *obj : s->model.objects)
+                acc(obj);
+        } else {
+            if (object_index >= int(s->model.objects.size()))
+                return -2;
+            acc(s->model.objects[size_t(object_index)]);
+        }
+        if (pos.empty())
+            return 0;
+        auto *p = static_cast<float *>(std::malloc(pos.size() * sizeof(float)));
+        auto *i = static_cast<uint32_t *>(std::malloc(idx.size() * sizeof(uint32_t)));
+        if (!p || !i) {
+            std::free(p);
+            std::free(i);
+            s->set_error("export_brim_ear_mesh: oom");
+            return -3;
+        }
+        std::memcpy(p, pos.data(), pos.size() * sizeof(float));
+        std::memcpy(i, idx.data(), idx.size() * sizeof(uint32_t));
+        *out_positions = p;
+        *out_vertex_count = pos.size() / 3;
+        *out_indices = i;
+        *out_index_count = idx.size();
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("export_brim_ear_mesh: ") + ex.what());
+        return -4;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W2: Mesh boolean + simplify + advanced plane cut
+// ---------------------------------------------------------------------------
+
+int orca_session_mesh_boolean(
+    orca_session_t *s, int object_a, int object_b, int op, int delete_b)
+{
+    if (!s || !s->has_model)
+        return -1;
+    if (object_a < 0 || object_b < 0
+        || object_a >= int(s->model.objects.size())
+        || object_b >= int(s->model.objects.size())
+        || object_a == object_b) {
+        s->set_error("mesh_boolean: need two distinct valid object indices");
+        return -2;
+    }
+    if (op < 0 || op > 2) {
+        s->set_error("mesh_boolean: op 0=union 1=diff 2=intersect");
+        return -3;
+    }
+    try {
+        ModelObject *A = s->model.objects[size_t(object_a)];
+        ModelObject *B = s->model.objects[size_t(object_b)];
+        if (!A || !B) {
+            s->set_error("mesh_boolean: null object");
+            return -4;
+        }
+        const char *op_str = (op == 0) ? "UNION" : (op == 1) ? "A_NOT_B" : "INTERSECTION";
+        // Transform B mesh into A's instance frame so booleans align in world space.
+        TriangleMesh mesh_a = A->mesh();
+        TriangleMesh mesh_b = B->mesh();
+        const Transform3d ta = object_instance_matrix(A);
+        const Transform3d tb = object_instance_matrix(B);
+        // Bring both to world, boolean, then back into A local (identity after replace).
+        mesh_a.transform(ta);
+        mesh_b.transform(tb);
+
+        std::vector<TriangleMesh> results;
+        MeshBoolean::mcut::make_boolean(mesh_a, mesh_b, results, op_str);
+        if (results.empty()) {
+            s->set_error("mesh_boolean: empty result");
+            return -5;
+        }
+        // Put result into A's local space (un-apply A instance)
+        const Transform3d inv_a = ta.inverse();
+        A->clear_volumes();
+        int i = 1;
+        for (TriangleMesh &m : results) {
+            m.transform(inv_a);
+            ModelVolume *vol = A->add_volume(std::move(m));
+            if (vol)
+                vol->name = A->name + "_" + std::to_string(i++);
+        }
+        A->invalidate_bounding_box();
+        A->ensure_on_bed();
+
+        if (delete_b) {
+            // delete higher index first if needed — object_b may shift if a < b after delete
+            s->model.delete_object(size_t(object_b));
+        }
+        s->has_model = !s->model.objects.empty();
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("mesh_boolean: ") + ex.what());
+        return -6;
+    } catch (...) {
+        s->set_error("mesh_boolean: unknown error");
+        return -6;
+    }
+}
+
+int orca_session_simplify_mesh(
+    orca_session_t *s, int object_index, int target_faces)
+{
+    if (!s || !s->has_model)
+        return -1;
+    if (object_index < 0)
+        object_index = 0;
+    if (object_index >= int(s->model.objects.size())) {
+        s->set_error("simplify_mesh: bad object index");
+        return -2;
+    }
+    try {
+        ModelObject *obj = s->model.objects[size_t(object_index)];
+        if (!obj) {
+            s->set_error("simplify_mesh: null object");
+            return -3;
+        }
+        int total_faces = 0;
+        for (ModelVolume *vol : obj->volumes) {
+            if (!vol || !vol->is_model_part())
+                continue;
+            TriangleMesh mesh = vol->mesh();
+            indexed_triangle_set &its = mesh.its;
+            if (its.indices.empty())
+                continue;
+            const int cur = int(its.indices.size());
+            uint32_t want = 0;
+            if (target_faces > 0)
+                want = uint32_t(std::max(4, std::min(target_faces, cur)));
+            else
+                want = uint32_t(std::max(4, cur / 2));
+            if (want >= uint32_t(cur)) {
+                total_faces += cur;
+                continue;
+            }
+            its_quadric_edge_collapse(its, want, nullptr, nullptr, nullptr);
+            vol->set_mesh(std::move(mesh));
+            vol->calculate_convex_hull();
+            vol->invalidate_convex_hull_2d();
+            total_faces += int(vol->mesh().its.indices.size());
+        }
+        obj->invalidate_bounding_box();
+        return total_faces;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("simplify_mesh: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("simplify_mesh: unknown error");
+        return -4;
+    }
+}
+
+int orca_session_cut_object_plane(
+    orca_session_t *s, int index,
+    float px, float py, float pz,
+    float nx, float ny, float nz,
+    int keep_upper, int keep_lower)
+{
+    if (!s || !s->has_model || index < 0 || index >= int(s->model.objects.size()))
+        return -1;
+    if (!keep_upper && !keep_lower) {
+        s->set_error("cut_plane: keep_upper and/or keep_lower required");
+        return -2;
+    }
+    try {
+        ModelObject *object = s->model.objects[size_t(index)];
+        if (!object || object->instances.empty()) {
+            s->set_error("cut_plane: invalid object");
+            return -3;
+        }
+        Vec3d n = Vec3d(double(nx), double(ny), double(nz));
+        const double nlen = n.norm();
+        if (nlen < 1e-9) {
+            s->set_error("cut_plane: zero normal");
+            return -4;
+        }
+        n /= nlen;
+        // Build cut matrix: rotation that maps +Z to n, then translate so origin is on plane.
+        // Cut expects transform of the cut plane (local XY plane → world cut plane).
+        Matrix3d rot_m = Matrix3d::Identity();
+        Vec3d axis = Vec3d::UnitX();
+        double phi = 0.;
+        Geometry::rotation_from_two_vectors(Vec3d::UnitZ(), n, axis, phi, &rot_m);
+        Transform3d rot = Transform3d::Identity();
+        rot.linear() = rot_m;
+        const Vec3d point = Vec3d(double(px), double(py), double(pz));
+        const size_t instance_idx = 0;
+        const Vec3d instance_offset = object->instances[instance_idx]->get_offset();
+        // Plane point relative to instance offset (same convention as cut_object_z)
+        Transform3d cut_matrix = Geometry::translation_transform(point - instance_offset) * rot;
+
+        ModelObjectCutAttributes attrs =
+            (keep_upper ? ModelObjectCutAttribute::KeepUpper : ModelObjectCutAttributes{}) |
+            (keep_lower ? ModelObjectCutAttribute::KeepLower : ModelObjectCutAttributes{});
+        Cut cut(object, int(instance_idx), cut_matrix, attrs);
+        const ModelObjectPtrs new_objects = cut.perform_with_plane();
+        s->model.delete_object(size_t(index));
+        for (ModelObject *mo : new_objects) {
+            if (!mo)
+                continue;
+            ModelObject *added = s->model.add_object(*mo);
+            if (added) {
+                added->sort_volumes(true);
+                added->ensure_on_bed();
+            }
+        }
+        s->has_model = !s->model.objects.empty();
+        return int(s->model.objects.size());
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("cut_object_plane: ") + ex.what());
+        return -5;
+    } catch (...) {
+        s->set_error("cut_object_plane: unknown error");
         return -5;
     }
 }

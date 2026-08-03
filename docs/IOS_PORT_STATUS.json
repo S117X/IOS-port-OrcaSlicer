@@ -1,9 +1,9 @@
 {
   "status": "wx_parity_in_progress",
   "percent_estimate": 100,
-  "updated": "2026-08-03T19:00:00Z",
+  "updated": "2026-08-03T20:30:00Z",
   "branch": "ios-port",
-  "last_focus": "wx W1 painters: support/seam/MMU/fuzzy FacetsAnnotation C API + Swift paint gizmos + SceneKit overlay",
+  "last_focus": "wx W1 brim ears + W2 mesh boolean/simplify/plane cut via official libslic3r C API + SwiftUI",
   "gates": {
     "G1": true,
     "G2": true,
@@ -22,6 +22,6 @@
     "G15": true,
     "G16": true
   },
-  "notes": "wxWidgets not on iOS — SwiftUI parity. W1 mostly done: paint_at/fill/clear/stats/export_paint_mesh via official TriangleSelector+FacetsAnnotation; Support/Seam/MMU/Fuzzy paint gizmos with brush, fill, clear, overlay. Remaining: brim ears (W1), advanced mesh W2, config wizard W3, viewer polish W5.",
-  "wx_parity_percent": 68
+  "notes": "wxWidgets not on iOS — SwiftUI parity. W1 complete (support/seam/MMU/fuzzy facets + brim ears points). W2 partial: boolean union/diff/intersect, quadric simplify, tilted plane cut. Open: assembly/explode, emboss, W3 chrome, W5 viewer polish.",
+  "wx_parity_percent": 78
 }

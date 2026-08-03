@@ -28,6 +28,8 @@ Status file: `docs/IOS_PORT_STATUS.json` field `wx_parity_percent`.
 | Measure gizmo | Measure mode + tap pick |
 | Move / Rotate / Scale gizmos | Gizmo modes + chips |
 | Support / seam / MMU / fuzzy paint | FacetsAnnotation via C API + paint gizmos |
+| Brim ears paint | `ModelObject::brim_points` C API + Brim ears gizmo |
+| Mesh boolean / simplify / plane cut | mcut boolean + quadric simplify + `cut_object_plane` |
 
 ---
 
@@ -37,15 +39,15 @@ Status file: `docs/IOS_PORT_STATUS.json` field `wx_parity_percent`.
 - [x] Support painting (`GLGizmoFdmSupports`) — `orca_session_paint_*` + Support paint gizmo
 - [x] Seam painting — Seam paint gizmo → `seam_facets`
 - [x] Multi-material / color painting (`GLGizmoMmuSegmentation`) — MMU paint gizmo → `mmu_segmentation_facets`
-- [ ] Brim ears paint (point markers, not triangle facets — still open)
+- [x] Brim ears paint (point markers → `brim_points` + disc overlay; sets `brim_type=painted`)
 - [x] Fuzzy skin paint — Fuzzy paint gizmo → `fuzzy_skin_facets`
 
 ### W2 — Advanced mesh tools
-- [ ] Advanced cut (non-horizontal planes, connectors)
+- [x] Advanced cut (non-horizontal plane via normal + point; connectors still open)
 - [ ] Assembly / multi-part explode
 - [ ] Emboss / text (`GLGizmoEmboss`)
-- [ ] Mesh boolean union/diff/intersect UI
-- [ ] Simplify / remesh
+- [x] Mesh boolean union/diff/intersect UI (`orca_session_mesh_boolean` mcut)
+- [x] Simplify / remesh (`its_quadric_edge_collapse`)
 
 ### W3 — Desktop chrome
 - [ ] Full ConfigWizard first-run (language, region, printers select)
@@ -72,4 +74,4 @@ wx_done = W1–W3 and W5 checked (W4 optional)
 status wx_parity_percent = 100
 ```
 
-Painters (W1) are the largest remaining desktop gap.
+W1 complete. Remaining: W2 explode/emboss, W3 chrome, W5 viewer polish.

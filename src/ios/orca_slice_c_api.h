@@ -552,6 +552,76 @@ ORCA_API int orca_session_export_paint_mesh(
     uint32_t **out_indices,
     size_t *out_index_count);
 
+/**
+ * Brim ears (desktop GLGizmoBrimEars) — point markers on ModelObject::brim_points.
+ * Coordinates are world/slic3r mm (instance-transformed). Points are stored in
+ * object space with world Z forced near the bed (same as desktop gizmo).
+ * Set brim_type=painted so MakeBrim uses painted ears.
+ *
+ * radius_mm: ear head radius (default ~ nozzle*8). Use <=0 for auto default 5 mm.
+ * @return 0 on success, or new count for add; <0 on error
+ */
+ORCA_API int orca_session_brim_ear_add(
+    orca_session_t *s, int object_index,
+    float world_x, float world_y, float radius_mm);
+
+/** Remove nearest ear within max_dist_mm of world (x,y). @return remaining count or <0. */
+ORCA_API int orca_session_brim_ear_remove_nearest(
+    orca_session_t *s, int object_index,
+    float world_x, float world_y, float max_dist_mm);
+
+/** Clear all brim ears on object (-1 = all objects). */
+ORCA_API int orca_session_brim_ear_clear(orca_session_t *s, int object_index);
+
+/** Count brim ears. object_index -1 = all. @return 0 and *count filled. */
+ORCA_API int orca_session_brim_ear_count(
+    orca_session_t *s, int object_index, int *count);
+
+/**
+ * List brim ears as flat floats [wx,wy,wz,radius, ...] (world coords).
+ * Free *out with orca_free(). *count = number of ears.
+ */
+ORCA_API int orca_session_brim_ear_list(
+    orca_session_t *s, int object_index,
+    float **out_xyzr, size_t *count);
+
+/**
+ * Export disc meshes at each brim ear for SceneKit overlay.
+ * Free *out_positions / *out_indices with orca_free().
+ */
+ORCA_API int orca_session_export_brim_ear_mesh(
+    orca_session_t *s, int object_index,
+    float **out_positions, size_t *out_vertex_count,
+    uint32_t **out_indices, size_t *out_index_count);
+
+/**
+ * Mesh boolean between two objects (desktop GLGizmoMeshBoolean).
+ * op: 0=union, 1=difference (A − B), 2=intersection.
+ * Result replaces object A volumes; object B is deleted when delete_b != 0.
+ * @return 0 on success
+ */
+ORCA_API int orca_session_mesh_boolean(
+    orca_session_t *s, int object_a, int object_b, int op, int delete_b);
+
+/**
+ * Simplify object mesh(es) via official its_quadric_edge_collapse.
+ * target_faces: desired triangle count (0 = ~50% of current).
+ * @return remaining triangle count, or <0 on error
+ */
+ORCA_API int orca_session_simplify_mesh(
+    orca_session_t *s, int object_index, int target_faces);
+
+/**
+ * Advanced plane cut: plane point (px,py,pz) + unit normal (nx,ny,nz) in world mm.
+ * keep_upper/keep_lower: which half-spaces to keep (normal side = upper).
+ * @return new object count, or <0
+ */
+ORCA_API int orca_session_cut_object_plane(
+    orca_session_t *s, int index,
+    float px, float py, float pz,
+    float nx, float ny, float nz,
+    int keep_upper, int keep_lower);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);
