@@ -52,9 +52,18 @@ final class OrcaEngine: ObservableObject {
     @Published var selectedPrinter: String = ""
     @Published var selectedProcess: String = ""
     @Published var selectedFilament: String = ""
+    /// Only list process/filament marked compatible with the selected printer
+    @Published var compatibleOnly: Bool = true
+    /// User-saved process preset names (also in processNames after save)
+    @Published var userProcessNames: [String] = []
     /// File path to machine cover / bed texture for plate logo
     @Published var bedTexturePath: String?
     @Published var printerCoverPath: String?
+
+    private let prefsPrinterKey = "orca.lastPrinter"
+    private let prefsProcessKey = "orca.lastProcess"
+    private let prefsFilamentKey = "orca.lastFilament"
+    private let prefsCompatKey = "orca.compatibleOnly"
 
     // MARK: Multi-plate (slot-based; each plate stores model+config as 3MF)
     @Published var plateCount: Int = 1
@@ -145,23 +154,44 @@ final class OrcaEngine: ObservableObject {
         refreshPresetLists()
         presetsLoaded = orca_session_presets_loaded(s) != 0
         presetsLoading = false
-        // Prefer a well-known printer if present (Voron / BBL / generic)
-        let preferred = [
-            "Voron 2.4 300 0.4 nozzle",
-            "Voron 2.4 250 0.4 nozzle",
-            "Bambu Lab X1 Carbon 0.4 nozzle",
-            "Generic Klipper Printer 0.4 nozzle",
-        ]
+        // Restore compatible-only filter preference
+        if UserDefaults.standard.object(forKey: prefsCompatKey) != nil {
+            compatibleOnly = UserDefaults.standard.bool(forKey: prefsCompatKey)
+            setCompatibleOnly(compatibleOnly)
+        }
+        // Restore last selection if still present; else prefer known printers
+        let savedPrinter = UserDefaults.standard.string(forKey: prefsPrinterKey) ?? ""
         var picked = false
-        for name in preferred where printerNames.contains(name) {
-            if selectPrinter(name) { picked = true; break }
+        if !savedPrinter.isEmpty, printerNames.contains(savedPrinter) {
+            picked = selectPrinter(savedPrinter)
+        }
+        if !picked {
+            let preferred = [
+                "Voron 2.4 300 0.4 nozzle",
+                "Voron 2.4 250 0.4 nozzle",
+                "Bambu Lab X1 Carbon 0.4 nozzle",
+                "Generic Klipper Printer 0.4 nozzle",
+            ]
+            for name in preferred where printerNames.contains(name) {
+                if selectPrinter(name) { picked = true; break }
+            }
         }
         if !picked, let first = printerNames.first {
             _ = selectPrinter(first)
         }
+        // Restore process/filament if still in (filtered) lists
+        if let sp = UserDefaults.standard.string(forKey: prefsProcessKey),
+           !sp.isEmpty, processNames.contains(sp) {
+            _ = selectProcess(sp)
+        }
+        if let sf = UserDefaults.standard.string(forKey: prefsFilamentKey),
+           !sf.isEmpty, filamentNames.contains(sf) {
+            _ = selectFilament(sf)
+        }
         lastMessage = String(
-            format: "Loaded %d printers · %d process · %d filament",
-            printerNames.count, processNames.count, filamentNames.count
+            format: "Loaded %d printers · %d process · %d filament (compatible filter %@)",
+            printerNames.count, processNames.count, filamentNames.count,
+            compatibleOnly ? "on" : "off"
         )
         #endif
     }
@@ -217,6 +247,17 @@ final class OrcaEngine: ObservableObject {
         if let c = orca_session_selected_filament(s) {
             selectedFilament = String(cString: c)
         }
+
+        let uc = Int(orca_session_user_process_count(s))
+        var users: [String] = []
+        users.reserveCapacity(uc)
+        for i in 0..<uc {
+            if let c = orca_session_user_process_name(s, Int32(i)) {
+                users.append(String(cString: c))
+            }
+        }
+        userProcessNames = users
+        compatibleOnly = orca_session_get_compatible_only(s) != 0
     }
 
     private func refreshCoverAndBedTexture() {
@@ -251,6 +292,8 @@ final class OrcaEngine: ObservableObject {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "apply_presets failed"
             return false
         }
+        // Compatible process/filament lists rebuilt in C after update_compatible
+        refreshPresetLists()
         selectedPrinter = name
         if let c = orca_session_selected_process(s) {
             selectedProcess = String(cString: c)
@@ -261,7 +304,11 @@ final class OrcaEngine: ObservableObject {
         }
         refreshBedSize()
         refreshCoverAndBedTexture()
-        lastMessage = "Printer: \(name) · bed \(Int(bedSize.x))×\(Int(bedSize.y))"
+        persistSelection()
+        lastMessage = String(
+            format: "Printer: %@ · bed %d×%d · %d process · %d filament",
+            name, Int(bedSize.x), Int(bedSize.y), processNames.count, filamentNames.count
+        )
         return true
         #else
         return false
@@ -280,7 +327,9 @@ final class OrcaEngine: ObservableObject {
         _ = orca_session_apply_presets(s)
         selectedProcess = name
         activeProcessProfile = name
+        refreshPresetLists()
         refreshBedSize()
+        persistSelection()
         lastMessage = "Process: \(name)"
         return true
         #else
@@ -299,11 +348,57 @@ final class OrcaEngine: ObservableObject {
         }
         _ = orca_session_apply_presets(s)
         selectedFilament = name
+        persistSelection()
         lastMessage = "Filament: \(name)"
         return true
         #else
         return false
         #endif
+    }
+
+    func setCompatibleOnly(_ on: Bool) {
+        #if ORCA_LINKED
+        guard let s = session else { return }
+        compatibleOnly = on
+        orca_session_set_compatible_only(s, on ? 1 : 0)
+        UserDefaults.standard.set(on, forKey: prefsCompatKey)
+        refreshPresetLists()
+        lastMessage = on
+            ? "Compatible process/filament only"
+            : "Showing all process/filament profiles"
+        #endif
+    }
+
+    /// Persist current process settings as a user preset (Documents/…/user_presets/process).
+    @discardableResult
+    func saveUserProcess(name: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else { return false }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            lastMessage = "Enter a name for the user process"
+            return false
+        }
+        let rc = trimmed.withCString { orca_session_save_user_process(s, $0) }
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "save user process failed"
+            return false
+        }
+        refreshPresetLists()
+        selectedProcess = trimmed
+        activeProcessProfile = trimmed
+        persistSelection()
+        lastMessage = "Saved user process “\(trimmed)”"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private func persistSelection() {
+        UserDefaults.standard.set(selectedPrinter, forKey: prefsPrinterKey)
+        UserDefaults.standard.set(selectedProcess, forKey: prefsProcessKey)
+        UserDefaults.standard.set(selectedFilament, forKey: prefsFilamentKey)
     }
 
     /// Printers for a vendor (empty vendor = all). Optional search filter.
@@ -642,9 +737,12 @@ final class OrcaEngine: ObservableObject {
                 orca_session_set_option(s, k, v)
             }
         }
-        lastMessage = rc == 0
-            ? "set \(key)=\(value)"
-            : (orca_session_last_error(s).map { String(cString: $0) } ?? "set failed")
+        if rc == 0 {
+            lastMessage = "set \(key)=\(value)"
+        } else {
+            let err = orca_session_last_error(s).map { String(cString: $0) } ?? "unknown"
+            lastMessage = "Failed to set \(key)=\(value): \(err)"
+        }
         #else
         lastMessage = "Not linked"
         #endif
@@ -900,7 +998,8 @@ final class OrcaEngine: ObservableObject {
             lastMessage = "set \(key)=\(value)"
             return true
         }
-        lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "set failed"
+        let err = orca_session_last_error(s).map { String(cString: $0) } ?? "unknown"
+        lastMessage = "Failed to set \(key)=\(value): \(err)"
         return false
         #else
         lastMessage = "Not linked"

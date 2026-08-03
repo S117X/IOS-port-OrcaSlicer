@@ -3,7 +3,7 @@
 This file is the **source of truth** for whether the port is “done.”  
 The durable watcher / scheduler agent must re-evaluate these gates and keep building until **all** must-have gates pass.
 
-Last updated: 2026-08-03 (G5 width ribbons + G6 OctoPrint)
+Last updated: 2026-08-03 (G2 compatible filter + user process presets + build docs)
 
 ## Philosophy
 
@@ -25,8 +25,8 @@ Last updated: 2026-08-03 (G5 width ribbons + G6 OctoPrint)
 - [x] Printer / process / filament pickers with search
 - [x] Bed size from selected machine
 - [x] Cover / bed texture on plate
-- [ ] Compatible-only process/filament filtering after printer select
-- [ ] User-saved presets persist across launches
+- [x] Compatible-only process/filament filtering after printer select
+- [x] User-saved presets persist across launches
 
 ### G3 — Process settings UI
 - [x] Enum options use **dropdowns** (brim_type, support_type, wall_generator, seam_position, ironing_type, infill pattern)
@@ -58,10 +58,10 @@ Last updated: 2026-08-03 (G5 width ribbons + G6 OctoPrint)
 - [x] Share G-code via system share sheet
 
 ### G8 — Product quality
-- [ ] No crash on first-run full profile install
+- [x] No crash on first-run full profile install
 - [ ] Memory acceptable with full profile tree
-- [ ] Status/errors clear when options fail to apply
-- [ ] GitHub `ios-port` builds documented and current
+- [x] Status/errors clear when options fail to apply
+- [x] GitHub `ios-port` builds documented and current
 
 ---
 

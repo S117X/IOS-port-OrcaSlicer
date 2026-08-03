@@ -1,11 +1,11 @@
 {
   "status": "in_progress",
-  "updated": "2026-08-03T00:30:00Z",
+  "updated": "2026-08-03T00:51:00Z",
   "branch": "ios-port",
-  "last_focus": "G5 WIDTH ribbon paths + G6 OctoPrint host",
+  "last_focus": "G2 compatible filter + user process presets; G8 errors/docs/first-run",
   "gates": {
     "G1_engine_build": true,
-    "G2_profiles": false,
+    "G2_profiles": true,
     "G3_process_ui": true,
     "G4_prepare_objects": true,
     "G5_preview": true,
@@ -13,5 +13,5 @@
     "G7_project": true,
     "G8_quality": false
   },
-  "notes": "G5: parse official ;WIDTH: comments, ribbon extrusion meshes, travel as lines. G6: Moonraker|OctoPrint host picker, OctoPrint API key, upload/start/cancel/job status. Remaining: G2 compatible process/filament filter + user presets; G8 quality (first-run profiles, memory, errors, docs)."
+  "notes": "G2 done: update_compatible filters process/filament lists; user process JSON under user_presets/process; last printer/process/filament restored via UserDefaults. G8: clear set_option errors, IOS_BUILD.md, first-run vendor install continues on partial failure. Remaining: G8 memory acceptable with full profile tree (verify/optimize)."
 }

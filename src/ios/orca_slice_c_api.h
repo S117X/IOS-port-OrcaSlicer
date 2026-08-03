@@ -264,6 +264,23 @@ ORCA_API int orca_session_select_filament(orca_session_t *s, const char *name);
 ORCA_API int orca_session_apply_presets(orca_session_t *s);
 
 /**
+ * When enabled (default 1), process/filament lists only include presets marked
+ * is_compatible with the selected printer (official update_compatible).
+ */
+ORCA_API void orca_session_set_compatible_only(orca_session_t *s, int enabled);
+ORCA_API int orca_session_get_compatible_only(orca_session_t *s);
+
+/**
+ * Save current session process-related config as a user process preset JSON
+ * under data_dir/user_presets/process/{name}.json. Survives app relaunch.
+ */
+ORCA_API int orca_session_save_user_process(orca_session_t *s, const char *name);
+
+/** Number of user-saved process presets (also merged into process list). */
+ORCA_API int orca_session_user_process_count(orca_session_t *s);
+ORCA_API const char *orca_session_user_process_name(orca_session_t *s, int index);
+
+/**
  * Path to machine cover PNG / bed texture under resources/profiles (may be empty).
  * Tries official bed_texture, then Vendor/Model_cover.png.
  */

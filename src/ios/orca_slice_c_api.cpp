@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <cctype>
 #include <vector>
 #include <cmath>
 #include <functional>
@@ -86,6 +87,10 @@ struct orca_session {
             progress_fn(pct, msg, progress_user);
     }
 
+    bool filter_compatible_only{true};
+    bool active_process_from_user{false};
+    std::vector<std::string> user_process_names;
+
     void refresh_name_caches() {
         printer_names.clear();
         process_names.clear();
@@ -102,15 +107,26 @@ struct orca_session {
             else
                 printer_vendors.push_back("");
         }
+        // Process / filament: after printer select, only list compatible presets
+        // (official is_compatible flag set by PresetBundle::update_compatible).
         for (const Preset &p : preset_bundle->prints) {
             if (p.is_default)
+                continue;
+            if (filter_compatible_only && !p.is_compatible)
                 continue;
             process_names.push_back(p.name);
         }
         for (const Preset &p : preset_bundle->filaments) {
             if (p.is_default)
                 continue;
+            if (filter_compatible_only && !p.is_compatible)
+                continue;
             filament_names.push_back(p.name);
+        }
+        // Append user-saved process presets (always listed)
+        for (const std::string &u : user_process_names) {
+            if (std::find(process_names.begin(), process_names.end(), u) == process_names.end())
+                process_names.push_back(u);
         }
         std::sort(printer_names.begin(), printer_names.end());
         // Keep vendors aligned after sort — rebuild vendors map
@@ -127,6 +143,28 @@ struct orca_session {
         std::sort(process_names.begin(), process_names.end());
         std::sort(filament_names.begin(), filament_names.end());
         sync_selected_caches();
+    }
+
+    fs::path user_process_dir() const {
+        return fs::path(data_dir_path.empty() ? "." : data_dir_path) / "user_presets" / "process";
+    }
+
+    void scan_user_process_presets() {
+        user_process_names.clear();
+        try {
+            fs::path dir = user_process_dir();
+            if (!fs::exists(dir))
+                return;
+            for (fs::directory_iterator it(dir), end; it != end; ++it) {
+                if (!fs::is_regular_file(it->path()))
+                    continue;
+                if (it->path().extension() != ".json")
+                    continue;
+                user_process_names.push_back(it->path().stem().string());
+            }
+            std::sort(user_process_names.begin(), user_process_names.end());
+        } catch (...) {
+        }
     }
 
     void sync_selected_caches() {
@@ -1285,6 +1323,7 @@ int orca_session_load_all_presets(orca_session_t *s)
             p.is_visible = true;
 
         s->preset_bundle->update_compatible(PresetSelectCompatibleType::Never);
+        s->scan_user_process_presets();
         s->refresh_name_caches();
         s->presets_loaded = !s->printer_names.empty();
         if (!s->presets_loaded) {
@@ -1365,6 +1404,8 @@ int orca_session_select_printer(orca_session_t *s, const char *name)
                 s->preset_bundle->prints.select_preset_by_name(def_print, true);
             else
                 s->preset_bundle->prints.select_preset(s->preset_bundle->prints.first_compatible_idx());
+            // Re-filter filaments against newly selected process
+            s->preset_bundle->update_compatible(PresetSelectCompatibleType::Always);
             if (!def_fil.empty()) {
                 s->preset_bundle->filaments.select_preset_by_name(def_fil, true);
                 s->preset_bundle->set_filament_preset(0, def_fil);
@@ -1374,7 +1415,8 @@ int orca_session_select_printer(orca_session_t *s, const char *name)
                     0, s->preset_bundle->filaments.get_selected_preset_name());
             }
         }
-        s->sync_selected_caches();
+        // Rebuild process/filament name lists to compatible-only
+        s->refresh_name_caches();
         return 0;
     } catch (const std::exception &ex) {
         s->set_error(std::string("select_printer: ") + ex.what());
@@ -1387,11 +1429,31 @@ int orca_session_select_process(orca_session_t *s, const char *name)
     if (!s || !name || !s->preset_bundle)
         return -1;
     try {
+        // User-saved process JSON (not in system PresetBundle)
+        fs::path user_json = s->user_process_dir() / (std::string(name) + ".json");
+        if (fs::exists(user_json)) {
+            ensure_default_config(s);
+            std::map<std::string, std::string> key_values;
+            std::string reason;
+            ConfigSubstitutionContext ctx(ForwardCompatibilitySubstitutionRule::Enable);
+            int rc = s->config.load_from_json(user_json.string(), ctx, true, key_values, reason);
+            if (rc != 0) {
+                s->set_error(reason.empty() ? "load user process failed" : reason);
+                return -4;
+            }
+            s->has_config = true;
+            s->selected_process_cache = name;
+            s->active_process_from_user = true;
+            return 0;
+        }
+        s->active_process_from_user = false;
         if (!s->preset_bundle->prints.select_preset_by_name(name, true)) {
             s->set_error(std::string("process not found: ") + name);
             return -2;
         }
-        s->sync_selected_caches();
+        // Filament compatibility can depend on selected process
+        s->preset_bundle->update_compatible(PresetSelectCompatibleType::Always);
+        s->refresh_name_caches();
         return 0;
     } catch (const std::exception &ex) {
         s->set_error(std::string("select_process: ") + ex.what());
@@ -1422,14 +1484,100 @@ int orca_session_apply_presets(orca_session_t *s)
     if (!s || !s->preset_bundle)
         return -1;
     try {
+        // Keep user process JSON if currently active
+        DynamicPrintConfig user_overlay;
+        const bool had_user = s->active_process_from_user;
+        const std::string user_name = s->selected_process_cache;
+        if (had_user)
+            user_overlay = s->config;
+
         s->config = s->preset_bundle->full_config(true);
+        if (had_user) {
+            // Re-apply user process options on top of machine/filament full_config
+            s->config.apply(user_overlay);
+        }
         s->has_config = true;
         s->sync_selected_caches();
+        if (had_user && !user_name.empty())
+            s->selected_process_cache = user_name;
         return 0;
     } catch (const std::exception &ex) {
         s->set_error(std::string("apply_presets: ") + ex.what());
         return -2;
     }
+}
+
+void orca_session_set_compatible_only(orca_session_t *s, int enabled)
+{
+    if (!s)
+        return;
+    s->filter_compatible_only = enabled != 0;
+    try {
+        if (s->preset_bundle) {
+            if (s->filter_compatible_only)
+                s->preset_bundle->update_compatible(PresetSelectCompatibleType::Never);
+            s->refresh_name_caches();
+        }
+    } catch (...) {
+    }
+}
+
+int orca_session_get_compatible_only(orca_session_t *s)
+{
+    return (s && s->filter_compatible_only) ? 1 : 0;
+}
+
+int orca_session_save_user_process(orca_session_t *s, const char *name)
+{
+    if (!s || !name || !*name)
+        return -1;
+    s->clear_error();
+    try {
+        ensure_default_config(s);
+        fs::path dir = s->user_process_dir();
+        fs::create_directories(dir);
+        // Sanitize filename
+        std::string safe;
+        for (const char *p = name; *p; ++p) {
+            char c = *p;
+            if (std::isalnum((unsigned char)c) || c == ' ' || c == '-' || c == '_' || c == '.')
+                safe.push_back(c);
+            else
+                safe.push_back('_');
+        }
+        if (safe.empty()) {
+            s->set_error("invalid preset name");
+            return -2;
+        }
+        fs::path path = dir / (safe + ".json");
+        // Official DynamicPrintConfig::save_to_json
+        s->config.save_to_json(path.string(), safe, "User", SoftFever_VERSION);
+        s->scan_user_process_presets();
+        s->refresh_name_caches();
+        s->selected_process_cache = safe;
+        s->active_process_from_user = true;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("save_user_process: ") + ex.what());
+        return -3;
+    } catch (...) {
+        s->set_error("save_user_process: unknown error");
+        return -3;
+    }
+}
+
+int orca_session_user_process_count(orca_session_t *s)
+{
+    if (!s)
+        return 0;
+    return (int)s->user_process_names.size();
+}
+
+const char *orca_session_user_process_name(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= (int)s->user_process_names.size())
+        return nullptr;
+    return s->user_process_names[(size_t)index].c_str();
 }
 
 static int copy_path_to_buf(orca_session_t *s, const std::string &path, char *buf, size_t buf_len)

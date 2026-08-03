@@ -1326,6 +1326,7 @@ struct OrcaRootView: View {
     @State private var showProcessPicker = false
     @State private var showFilamentPicker = false
     @State private var showAllSettings = false
+    @State private var userProcessName = ""
 
     private var processSheet: some View {
         NavigationStack {
@@ -1339,7 +1340,24 @@ struct OrcaRootView: View {
                         }
                         .listRowBackground(OrcaTheme.panel)
                     } else if engine.presetsLoaded {
-                        labeled("Catalog", "\(engine.printerNames.count) printers · \(engine.processNames.count) process · \(engine.filamentNames.count) filament")
+                        labeled(
+                            "Catalog",
+                            "\(engine.printerNames.count) printers · \(engine.processNames.count) process · \(engine.filamentNames.count) filament"
+                        )
+                        Toggle(isOn: Binding(
+                            get: { engine.compatibleOnly },
+                            set: { engine.setCompatibleOnly($0) }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Compatible only")
+                                    .foregroundStyle(OrcaTheme.text)
+                                Text("Filter process & filament for selected printer")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(OrcaTheme.muted)
+                            }
+                        }
+                        .tint(OrcaTheme.accent)
+                        .listRowBackground(OrcaTheme.panel)
                     } else {
                         Button {
                             Task { await engine.loadAllSystemPresets() }
@@ -1414,6 +1432,36 @@ struct OrcaRootView: View {
                     .listRowBackground(OrcaTheme.panel)
                 } header: {
                     Text("System profiles")
+                }
+
+                Section {
+                    TextField("Name (e.g. My PLA Fine)", text: $userProcessName)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.system(size: 15, design: .monospaced))
+                        .foregroundStyle(OrcaTheme.text)
+                        .listRowBackground(OrcaTheme.panel)
+                    Button {
+                        let name = userProcessName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if engine.saveUserProcess(name: name.isEmpty ? "My Process" : name) {
+                            status = engine.lastMessage
+                            if userProcessName.isEmpty { userProcessName = "My Process" }
+                        } else {
+                            status = engine.lastMessage
+                        }
+                    } label: {
+                        Text("Save current settings as user process")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    if !engine.userProcessNames.isEmpty {
+                        Text("Saved: \(engine.userProcessNames.joined(separator: ", "))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(OrcaTheme.muted)
+                            .listRowBackground(OrcaTheme.panel)
+                    }
+                } header: {
+                    Text("User process (persists)")
                 }
 
                 if !engine.presetsLoaded {
