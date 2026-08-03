@@ -202,6 +202,43 @@ struct OrcaRootView: View {
                 .presentationDetents([.medium])
                 .preferredColorScheme(.dark)
         }
+        .sheet(isPresented: $showShortcuts) {
+            NavigationStack {
+                List {
+                    Section("Prepare") {
+                        labeled("Open", "Toolbar Open")
+                        labeled("Slice", "Slice plate button")
+                        labeled("Undo / Redo", "Header ↩ / ↪")
+                        labeled("Gizmos", "Select · Move · Rotate · Scale · Measure")
+                        labeled("Explode", "Tool chip Explode / Collapse")
+                    }
+                    Section("Process") {
+                        labeled("Settings", "Slider icon · Process sheet")
+                        labeled("All settings", "Search browser in Process")
+                    }
+                    Section("Device") {
+                        labeled("Discover", "mDNS list after Connect")
+                        labeled("Upload / Start", "Device tab actions")
+                    }
+                    Section("Auxiliary") {
+                        labeled("User presets", "Files app → On My iPhone → OrcaSlicer")
+                        labeled("Export bundle", "Preferences → Export user presets")
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .background(OrcaTheme.bg)
+                .navigationTitle("Shortcuts")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { showShortcuts = false }
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+            .preferredColorScheme(.dark)
+        }
         .sheet(isPresented: $showObjectSettings) {
             objectSettingsSheet
                 .presentationDetents([.medium, .large])
@@ -290,6 +327,7 @@ struct OrcaRootView: View {
                 .disabled(!engine.hasModel || engine.selectedObjectIndex < 0)
                 Button("Setup wizard…") { showWizard = true }
                 Button("Preferences…") { showPreferences = true }
+                Button("Keyboard shortcuts…") { showShortcuts = true }
                 Button("About OrcaSlicer…") { showAbout = true }
             } label: {
                 Image(systemName: "ellipsis.circle")

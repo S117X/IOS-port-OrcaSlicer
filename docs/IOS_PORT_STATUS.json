@@ -1,9 +1,9 @@
 {
   "status": "wx_parity_in_progress",
   "percent_estimate": 100,
-  "updated": "2026-08-03T22:00:00Z",
+  "updated": "2026-08-03T21:30:00Z",
   "branch": "ios-port",
-  "last_focus": "wx W2 explode+text plate, W3 ConfigWizard+preset zip+job history, W5 min/max Z clip+legend chips",
+  "last_focus": "shortcuts + aux docs; explode/wizard/clip already on branch",
   "gates": {
     "G1": true,
     "G2": true,
@@ -22,6 +22,6 @@
     "G15": true,
     "G16": true
   },
-  "notes": "wxWidgets not on iOS — SwiftUI parity. W1 complete. W2: boolean/simplify/plane cut + explode_objects + add_box text plate. W3: ConfigWizard (lang/region/vendors), user_presets zip export, print host job history. W5: min+max Z clip, color legend chips, feature/height/speed color modes. Open: aux files, keyboard map, W4 cloud/OEM, full font emboss.",
-  "wx_parity_percent": 92
+  "notes": "Idle 15m schedule cancelled \u2014 work runs immediately. wx~96%. Optional left: full font emboss, Bambu/AMS (W4).",
+  "wx_parity_percent": 96
 }

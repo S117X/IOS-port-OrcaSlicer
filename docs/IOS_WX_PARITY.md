@@ -59,8 +59,8 @@ Status file: `docs/IOS_PORT_STATUS.json` field `wx_parity_percent`.
 ### W3 — Desktop chrome
 - [x] Full ConfigWizard first-run (language, region, printers/vendors select, last printer restore)
 - [x] Export preset bundle dialog (zip user_presets + ShareLink / activity sheet)
-- [ ] Auxiliary files / project media
-- [ ] Keyboard shortcut map
+- [x] Auxiliary files / project media
+- [x] Keyboard shortcut map
 - [x] Print host queue history UI (Device tab; host+filename+date)
 
 ### W4 — Cloud / OEM (optional / policy)
