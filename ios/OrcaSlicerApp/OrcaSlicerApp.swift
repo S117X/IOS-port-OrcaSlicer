@@ -1924,6 +1924,9 @@ struct OrcaRootView: View {
                     engine.pushUndoSnapshot(label: "arrange")
                     engine.arrange(); status = engine.lastMessage
                 }
+                toolChip("Deselect", "xmark.circle") {
+                    engine.clearSelection(); status = engine.lastMessage
+                }
                 toolChip(
                     engine.explodeFactor > 0.001 ? "Collapse" : "Explode",
                     engine.explodeFactor > 0.001
