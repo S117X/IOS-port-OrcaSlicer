@@ -46,7 +46,7 @@ struct OrcaRootView: View {
     @State private var layerHeight = "0.20"
     @State private var infill = "15"
     @State private var walls = "2"
-    @State private var status = "Open or Add a model · drag to orbit · pinch to zoom · Slice."
+    @State private var status = ""
     @State private var isSlicing = false
     @State private var mainTab: MainTab = .prepare
 
@@ -117,7 +117,7 @@ struct OrcaRootView: View {
                     Circle()
                         .fill(engine.isLinked ? OrcaTheme.success : OrcaTheme.danger)
                         .frame(width: 7, height: 7)
-                    Text(engine.isLinked ? "Official libslic3r linked" : "Engine not linked")
+                    Text(engine.isLinked ? "Ready" : "Engine offline")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(engine.isLinked ? OrcaTheme.success : OrcaTheme.danger)
                         .lineLimit(1)
@@ -148,7 +148,7 @@ struct OrcaRootView: View {
                 Button {
                     mainTab = tab
                     if tab == .preview && engine.gcodeURL == nil {
-                        status = "Slice first to open G-code preview."
+                        status = "Slice to preview toolpaths."
                     }
                 } label: {
                     Text(tab.rawValue)
@@ -165,25 +165,28 @@ struct OrcaRootView: View {
     }
 
     private var hintOverlay: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(mainTab == .preview ? "Preview · drag orbit · pinch zoom" : "Prepare · drag orbit · pinch zoom")
-                .font(.system(size: 11, weight: .semibold))
-            Text(String(format: "Bed %.0f×%.0f×%.0f mm", engine.bedSize.x, engine.bedSize.y, engine.bedHeight))
-                .font(.system(size: 11, design: .monospaced))
-            if engine.hasModel {
-                Text(engine.boundsText.isEmpty ? "\(engine.objectCount) object(s) on plate" : engine.boundsText)
-                    .font(.system(size: 11, design: .monospaced))
-            }
-            if let name = engine.modelName {
-                Text(name)
-                    .font(.system(size: 11, design: .monospaced))
-                    .lineLimit(1)
+        // Model / bed facts only — no tutorial tip copy
+        Group {
+            if engine.hasModel || !engine.boundsText.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let name = engine.modelName {
+                        Text(name)
+                            .font(.system(size: 11, design: .monospaced))
+                            .lineLimit(1)
+                    }
+                    if !engine.boundsText.isEmpty {
+                        Text(engine.boundsText)
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+                    Text(String(format: "%.0f × %.0f × %.0f mm", engine.bedSize.x, engine.bedSize.y, engine.bedHeight))
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                .foregroundStyle(OrcaTheme.muted)
+                .padding(10)
+                .background(OrcaTheme.panel.opacity(0.92))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
         }
-        .foregroundStyle(OrcaTheme.muted)
-        .padding(10)
-        .background(OrcaTheme.panel.opacity(0.92))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     @State private var printerHost = "http://192.168.1.100"
@@ -259,7 +262,7 @@ struct OrcaRootView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Quick temps (local config only until connected)")
+                    Text("Print temps")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(OrcaTheme.muted)
                     HStack(spacing: 10) {
@@ -276,10 +279,7 @@ struct OrcaRootView: View {
                     }
                 }
 
-                Text("Uses Moonraker HTTP API (server.info / server.files.upload). Full printer control (pause, resume, cam) is next.")
-                    .font(.caption)
-                    .foregroundStyle(OrcaTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+
             }
             .padding(20)
         }
@@ -387,11 +387,13 @@ struct OrcaRootView: View {
 
     private func controlsPanel(bottomInset: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(status)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(OrcaTheme.muted)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
+            if !status.isEmpty {
+                Text(status)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OrcaTheme.muted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack(spacing: 10) {
                 actionButton(title: "Open", systemImage: "folder.fill") {
@@ -449,7 +451,7 @@ struct OrcaRootView: View {
                 HStack(spacing: 10) {
                     Button {
                         mainTab = .preview
-                        status = "G-code path preview — orbit to inspect toolpaths."
+                        status = ""
                     } label: {
                         Label("Preview", systemImage: "eye")
                             .font(.system(size: 13, weight: .semibold))
@@ -736,7 +738,7 @@ struct OrcaRootView: View {
                         status = engine.lastMessage
                     }
                 } header: {
-                    Text("Quality (DynamicPrintConfig)")
+                    Text("Quality")
                 }
                 Section {
                     Toggle(isOn: $supportOn) {
@@ -755,8 +757,6 @@ struct OrcaRootView: View {
                     }
                 } header: {
                     Text("Support / brim")
-                } footer: {
-                    Text("brim_type: no_brim · outer_only · inner_only · outer_and_inner")
                 }
                 Section {
                     processField(title: "outer_wall_speed", unit: "mm/s", text: $outerWallSpeed) {
@@ -787,8 +787,6 @@ struct OrcaRootView: View {
                     }
                 } header: {
                     Text("Filament / temps")
-                } footer: {
-                    Text("Options map to DynamicPrintConfig keys used by official G-code export.")
                 }
                 Section {
                     Button {
@@ -945,7 +943,7 @@ struct OrcaRootView: View {
     }
 
     private func sliceNow() {
-        status = "Slicing with official libslic3r…"
+        status = ""
         isSlicing = true
         Task {
             let msg = await engine.slice()
