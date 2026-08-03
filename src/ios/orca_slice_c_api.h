@@ -463,6 +463,33 @@ ORCA_API int orca_session_clear_calib(orca_session_t *s);
 /** Current calib mode (CalibMode int), or 0 if none / null session. */
 ORCA_API int orca_session_get_calib_mode(orca_session_t *s);
 
+/**
+ * Per-object config override (ModelObject::config) — desktop Object Settings.
+ * index: object index. set: deserialize key=value into object config.
+ * get: serialize option into buf (empty if not overridden).
+ * erase: remove override so global process value applies.
+ */
+ORCA_API int orca_session_set_object_option(
+    orca_session_t *s, int index, const char *key, const char *value);
+ORCA_API int orca_session_get_object_option(
+    orca_session_t *s, int index, const char *key, char *buf, size_t buf_len);
+ORCA_API int orca_session_erase_object_option(
+    orca_session_t *s, int index, const char *key);
+
+/**
+ * Assign extruder (1-based desktop convention; 0 = default) on object config.
+ */
+ORCA_API int orca_session_set_object_extruder(
+    orca_session_t *s, int index, int extruder_1based);
+
+/** Snapshot model+config to path for undo stack (3MF). */
+ORCA_API int orca_session_snapshot(orca_session_t *s, const char *path);
+
+/**
+ * Restore model+config from 3MF path (keeps printable_area if missing in file).
+ */
+ORCA_API int orca_session_restore_snapshot(orca_session_t *s, const char *path);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);

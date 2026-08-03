@@ -63,6 +63,27 @@ struct OrcaRootView: View {
         case device = "Device"
     }
 
+    /// Desktop-style gizmo / tool modes (wx GLGizmos subset)
+    enum GizmoMode: String, CaseIterable {
+        case select = "Select"
+        case move = "Move"
+        case rotate = "Rotate"
+        case scale = "Scale"
+        case measure = "Measure"
+    }
+
+    @State private var gizmoMode: GizmoMode = .select
+    @State private var showPreferences = false
+    @State private var showAbout = false
+    @State private var showObjectSettings = false
+    @State private var objLayerHeight = ""
+    @State private var objWalls = ""
+    @State private var objInfill = ""
+    @State private var objExtruder = "0"
+    @State private var measurePointA: SIMD3<Float>?
+    @State private var measurePointB: SIMD3<Float>?
+    @State private var measureDistanceText = ""
+
     var body: some View {
         GeometryReader { geo in
             let bottomPad = max(geo.safeAreaInsets.bottom, 8)
@@ -71,47 +92,8 @@ struct OrcaRootView: View {
                 VStack(spacing: 0) {
                     headerBar
                     tabBar
-                    ZStack {
-                        // 3D stage: real mesh + orbit; Preview shows G-code paths
-                        PlateSceneView(
-                            mesh: engine.mesh,
-                            gcodeNode: engine.gcodePathNode,
-                            showGCode: mainTab == .preview && engine.gcodePathNode != nil,
-                            bedSize: engine.bedSize,
-                            bedTexturePath: engine.bedTexturePath,
-                            accent: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1),
-                            moveMode: moveMode && mainTab == .prepare && engine.hasModel,
-                            onDragCommit: { dx, dy in
-                                engine.translate(dx: dx, dy: dy)
-                                status = engine.lastMessage
-                            },
-                            onDragLive: { dx, dy in
-                                status = String(format: "Drag Δ%.1f, %.1f mm", dx, dy)
-                            }
-                        )
-                        .overlay(alignment: .topLeading) {
-                            hintOverlay
-                                .padding(12)
-                        }
-                        .overlay(alignment: .topTrailing) {
-                            if moveMode && mainTab == .prepare && engine.hasModel {
-                                Text("Drag on plate · orbit off")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(OrcaTheme.accent)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(OrcaTheme.panel.opacity(0.95))
-                                    .clipShape(Capsule())
-                                    .padding(12)
-                            }
-                        }
-                        .overlay {
-                            if mainTab == .device {
-                                devicePlaceholder
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    plateStage
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if mainTab == .preview, engine.gcodeGeometry != nil {
                         layerScrubber
@@ -130,6 +112,21 @@ struct OrcaRootView: View {
             calibrationSheet
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showPreferences) {
+            preferencesSheet
+                .presentationDetents([.medium, .large])
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showAbout) {
+            aboutSheet
+                .presentationDetents([.medium])
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showObjectSettings) {
+            objectSettingsSheet
+                .presentationDetents([.medium, .large])
                 .preferredColorScheme(.dark)
         }
         .fileImporter(
@@ -178,6 +175,42 @@ struct OrcaRootView: View {
                 }
             }
             Spacer(minLength: 8)
+            Button {
+                engine.undo()
+                status = engine.lastMessage
+            } label: {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(engine.canUndo ? OrcaTheme.text : OrcaTheme.muted)
+                    .frame(width: 40, height: 44)
+            }
+            .disabled(!engine.canUndo)
+            Button {
+                engine.redo()
+                status = engine.lastMessage
+            } label: {
+                Image(systemName: "arrow.uturn.forward")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(engine.canRedo ? OrcaTheme.text : OrcaTheme.muted)
+                    .frame(width: 40, height: 44)
+            }
+            .disabled(!engine.canRedo)
+            Menu {
+                Button("Object settings…") {
+                    loadObjectSettingsFields()
+                    showObjectSettings = true
+                }
+                .disabled(!engine.hasModel || engine.selectedObjectIndex < 0)
+                Button("Preferences…") { showPreferences = true }
+                Button("About OrcaSlicer…") { showAbout = true }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OrcaTheme.text)
+                    .frame(width: 44, height: 44)
+                    .background(OrcaTheme.elevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
             Button { showProcess = true } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 17, weight: .semibold))
@@ -1657,8 +1690,40 @@ struct OrcaRootView: View {
                         ? "Move mode: drag on plate (orbit off)"
                         : "Orbit camera"
                 }
+                // Desktop gizmo strip (wx GLGizmos)
+                ForEach(GizmoMode.allCases, id: \.self) { mode in
+                    toolChip(mode.rawValue, gizmoIcon(mode), selected: gizmoMode == mode) {
+                        gizmoMode = mode
+                        moveMode = (mode == .move)
+                        if mode != .measure {
+                            measurePointA = nil
+                            measurePointB = nil
+                            measureDistanceText = ""
+                        }
+                        status = "Gizmo: \(mode.rawValue)"
+                    }
+                }
+                if gizmoMode == .rotate {
+                    toolChip("↺ Z45", "rotate.left") {
+                        engine.rotateZ(degrees: -45); status = engine.lastMessage
+                    }
+                    toolChip("↻ Z45", "rotate.right") {
+                        engine.rotateZ(degrees: 45); status = engine.lastMessage
+                    }
+                }
+                if gizmoMode == .scale {
+                    toolChip("×0.9", "minus.magnifyingglass") {
+                        engine.scale(factor: 0.9); status = engine.lastMessage
+                    }
+                    toolChip("×1.1", "plus.magnifyingglass") {
+                        engine.scale(factor: 1.1); status = engine.lastMessage
+                    }
+                }
                 toolChip("Center", "scope") { engine.centerOnBed(); status = engine.lastMessage }
-                toolChip("Arrange", "square.grid.2x2") { engine.arrange(); status = engine.lastMessage }
+                toolChip("Arrange", "square.grid.2x2") {
+                    engine.pushUndoSnapshot(label: "arrange")
+                    engine.arrange(); status = engine.lastMessage
+                }
                 toolChip("Orient", "arrow.up.and.down.and.arrow.left.and.right") {
                     engine.autoOrient(); status = engine.lastMessage
                 }
@@ -1681,6 +1746,223 @@ struct OrcaRootView: View {
                 toolChip("→", "arrow.right") { engine.translate(dx: 10, dy: 0); status = engine.lastMessage }
                 toolChip("↑", "arrow.up") { engine.translate(dx: 0, dy: 10); status = engine.lastMessage }
                 toolChip("↓", "arrow.down") { engine.translate(dx: 0, dy: -10); status = engine.lastMessage }
+            }
+        }
+    }
+
+    private var plateStage: some View {
+        ZStack {
+            PlateSceneView(
+                mesh: engine.mesh,
+                gcodeNode: engine.gcodePathNode,
+                showGCode: mainTab == .preview && engine.gcodePathNode != nil,
+                bedSize: engine.bedSize,
+                bedTexturePath: engine.bedTexturePath,
+                accent: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1),
+                moveMode: (moveMode || gizmoMode == .move) && mainTab == .prepare && engine.hasModel,
+                measureMode: gizmoMode == .measure && mainTab == .prepare,
+                onDragCommit: { dx, dy in
+                    engine.translate(dx: dx, dy: dy, recordUndo: true)
+                    status = engine.lastMessage
+                },
+                onDragLive: { dx, dy in
+                    status = String(format: "Drag Δ%.1f, %.1f mm", dx, dy)
+                },
+                onMeasurePick: { handleMeasurePick($0) }
+            )
+            .overlay(alignment: .topLeading) {
+                hintOverlay.padding(12)
+            }
+            .overlay(alignment: .topTrailing) {
+                gizmoStatusBadges.padding(12)
+            }
+            .overlay {
+                if mainTab == .device {
+                    devicePlaceholder
+                }
+            }
+        }
+    }
+
+    private var gizmoStatusBadges: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            if (moveMode || gizmoMode == .move) && mainTab == .prepare && engine.hasModel {
+                Text("Move gizmo · orbit off")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(OrcaTheme.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(OrcaTheme.panel.opacity(0.95))
+                    .clipShape(Capsule())
+            }
+            if gizmoMode == .measure && !measureDistanceText.isEmpty {
+                Text(measureDistanceText)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(OrcaTheme.panel.opacity(0.95))
+                    .clipShape(Capsule())
+            }
+        }
+    }
+
+    private func handleMeasurePick(_ pt: SIMD3<Float>) {
+        if measurePointA == nil || measurePointB != nil {
+            measurePointA = pt
+            measurePointB = nil
+            measureDistanceText = String(format: "A (%.1f, %.1f, %.1f)", pt.x, pt.y, pt.z)
+            return
+        }
+        measurePointB = pt
+        guard let a = measurePointA else { return }
+        let dx = pt.x - a.x
+        let dy = pt.y - a.y
+        let dz = pt.z - a.z
+        let d = sqrt(dx * dx + dy * dy + dz * dz)
+        measureDistanceText = String(format: "Distance %.2f mm", d)
+        status = measureDistanceText
+    }
+
+    private func gizmoIcon(_ mode: GizmoMode) -> String {
+        switch mode {
+        case .select: return "cursorarrow"
+        case .move: return "arrow.up.and.down.and.arrow.left.and.right"
+        case .rotate: return "rotate.3d"
+        case .scale: return "arrow.up.left.and.arrow.down.right"
+        case .measure: return "ruler"
+        }
+    }
+
+    private func loadObjectSettingsFields() {
+        let idx = engine.selectedObjectIndex >= 0 ? engine.selectedObjectIndex : 0
+        objLayerHeight = engine.getObjectOption(index: idx, key: "layer_height")
+            ?? engine.getOptionFirst("layer_height") ?? "0.2"
+        objWalls = engine.getObjectOption(index: idx, key: "wall_loops")
+            ?? engine.getOptionFirst("wall_loops") ?? "2"
+        objInfill = (engine.getObjectOption(index: idx, key: "sparse_infill_density")
+            ?? engine.getOptionPercent("sparse_infill_density") ?? "15")
+            .replacingOccurrences(of: "%", with: "")
+        objExtruder = engine.getObjectOption(index: idx, key: "extruder") ?? "0"
+    }
+
+    private var preferencesSheet: some View {
+        NavigationStack {
+            List {
+                Section("Appearance") {
+                    Toggle("Dark mode (forced)", isOn: .constant(true))
+                        .listRowBackground(OrcaTheme.panel)
+                    labeled("Theme", "Orca desktop dark")
+                }
+                Section("Slicing defaults") {
+                    labeled("Compatible filter", engine.compatibleOnly ? "On" : "Off")
+                    Toggle("Compatible process/filament only", isOn: $engine.compatibleOnly)
+                        .listRowBackground(OrcaTheme.panel)
+                        .onChange(of: engine.compatibleOnly) { on in
+                            engine.setCompatibleOnly(on)
+                        }
+                }
+                Section("Paths") {
+                    labeled("Data", "Documents/OrcaSlicer")
+                    labeled("Profiles", "Bundle · profiles/")
+                }
+                Section("Engine") {
+                    Text(engine.version)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(OrcaTheme.muted)
+                        .listRowBackground(OrcaTheme.panel)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrcaTheme.bg)
+            .navigationTitle("Preferences")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { showPreferences = false }
+                        .foregroundStyle(OrcaTheme.accent)
+                }
+            }
+        }
+    }
+
+    private var aboutSheet: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Image(systemName: "seal.fill")
+                    .font(.system(size: 48))
+                    .foregroundStyle(OrcaTheme.accent)
+                Text("OrcaSlicer")
+                    .font(.title.bold())
+                    .foregroundStyle(OrcaTheme.text)
+                Text(engine.version)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.muted)
+                    .multilineTextAlignment(.center)
+                Text("iOS shell (SwiftUI) · official libslic3r engine\nAGPL-3.0 · replaces desktop wxWidgets UI on mobile")
+                    .font(.footnote)
+                    .foregroundStyle(OrcaTheme.muted)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                Spacer()
+            }
+            .padding(.top, 32)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(OrcaTheme.bg)
+            .navigationTitle("About")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { showAbout = false }
+                        .foregroundStyle(OrcaTheme.accent)
+                }
+            }
+        }
+    }
+
+    private var objectSettingsSheet: some View {
+        let idx = engine.selectedObjectIndex >= 0 ? engine.selectedObjectIndex : 0
+        return NavigationStack {
+            List {
+                Section("Object \(idx + 1)") {
+                    labeled("Name", engine.objectNames.indices.contains(idx) ? engine.objectNames[idx] : "—")
+                }
+                Section("Overrides (desktop Object Settings)") {
+                    processField(title: "layer_height", unit: "mm", text: $objLayerHeight) {
+                        _ = engine.setObjectOption(index: idx, key: "layer_height", value: objLayerHeight)
+                        status = engine.lastMessage
+                    }
+                    processField(title: "wall_loops", unit: "", text: $objWalls) {
+                        _ = engine.setObjectOption(index: idx, key: "wall_loops", value: objWalls)
+                        status = engine.lastMessage
+                    }
+                    processField(title: "sparse_infill_density", unit: "%", text: $objInfill) {
+                        _ = engine.setObjectOption(index: idx, key: "sparse_infill_density", value: "\(objInfill)%")
+                        status = engine.lastMessage
+                    }
+                    processField(title: "extruder (0=default)", unit: "", text: $objExtruder) {
+                        if let e = Int(objExtruder) {
+                            engine.setObjectExtruder(index: idx, extruder1Based: e)
+                            status = engine.lastMessage
+                        }
+                    }
+                    Button("Clear layer_height override") {
+                        engine.eraseObjectOption(index: idx, key: "layer_height")
+                        loadObjectSettingsFields()
+                    }
+                    .foregroundStyle(OrcaTheme.danger)
+                    .listRowBackground(OrcaTheme.panel)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrcaTheme.bg)
+            .navigationTitle("Object settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { showObjectSettings = false }
+                        .foregroundStyle(OrcaTheme.accent)
+                }
             }
         }
     }

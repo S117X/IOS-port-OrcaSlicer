@@ -2412,6 +2412,97 @@ int orca_session_get_calib_mode(orca_session_t *s)
     return static_cast<int>(s->calib_params.mode);
 }
 
+int orca_session_set_object_option(
+    orca_session_t *s, int index, const char *key, const char *value)
+{
+    if (!s || !s->has_model || !key || !value || index < 0
+        || index >= int(s->model.objects.size()))
+        return -1;
+    try {
+        ModelObject *obj = s->model.objects[size_t(index)];
+        if (!obj)
+            return -2;
+        ConfigSubstitutionContext ctx(ForwardCompatibilitySubstitutionRule::EnableSilent);
+        obj->config.set_deserialize(key, value, ctx);
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("set_object_option: ") + ex.what());
+        return -3;
+    }
+}
+
+int orca_session_get_object_option(
+    orca_session_t *s, int index, const char *key, char *buf, size_t buf_len)
+{
+    if (!s || !buf || buf_len == 0 || !key || index < 0
+        || index >= int(s->model.objects.size()))
+        return -1;
+    buf[0] = '\0';
+    try {
+        ModelObject *obj = s->model.objects[size_t(index)];
+        if (!obj || !obj->config.has(key))
+            return -2; // not overridden
+        std::string val = obj->config.opt_serialize(key);
+        if (val.size() >= buf_len) {
+            s->set_error("buffer too small");
+            return -3;
+        }
+        std::memcpy(buf, val.c_str(), val.size() + 1);
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("get_object_option: ") + ex.what());
+        return -4;
+    }
+}
+
+int orca_session_erase_object_option(
+    orca_session_t *s, int index, const char *key)
+{
+    if (!s || !s->has_model || !key || index < 0
+        || index >= int(s->model.objects.size()))
+        return -1;
+    try {
+        ModelObject *obj = s->model.objects[size_t(index)];
+        if (!obj)
+            return -2;
+        obj->config.erase(key);
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("erase_object_option: ") + ex.what());
+        return -3;
+    }
+}
+
+int orca_session_set_object_extruder(
+    orca_session_t *s, int index, int extruder_1based)
+{
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%d", extruder_1based);
+    return orca_session_set_object_option(s, index, "extruder", buf);
+}
+
+int orca_session_snapshot(orca_session_t *s, const char *path)
+{
+    return orca_session_save_3mf(s, path);
+}
+
+int orca_session_restore_snapshot(orca_session_t *s, const char *path)
+{
+    if (!s || !path)
+        return -1;
+    // Preserve bed size across restore when possible
+    float bw = 220, bd = 220, bh = 250;
+    orca_session_bed_size(s, &bw, &bd, &bh);
+    int rc = orca_session_load_model(s, path); // 3MF load applies embedded config
+    if (rc != 0)
+        return rc;
+    // Re-assert bed if stripped
+    float w2 = 0, d2 = 0, h2 = 0;
+    if (orca_session_bed_size(s, &w2, &d2, &h2) != 0 || w2 < 1.f)
+        orca_session_set_printable_area(s, bw, bd, bh);
+    return 0;
+}
+
 const char *orca_session_last_error(orca_session_t *s)
 {
     if (!s)

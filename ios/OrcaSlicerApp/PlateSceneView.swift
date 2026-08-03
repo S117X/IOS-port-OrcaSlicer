@@ -20,10 +20,14 @@ struct PlateSceneView: UIViewRepresentable {
     var accent: UIColor = UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
     /// Prepare tab: pan on bed plane moves selected object(s) in mm (slic3r XY).
     var moveMode: Bool = false
+    /// Measure gizmo: tap places points in slic3r XYZ (mm).
+    var measureMode: Bool = false
     /// Called with total Δx, Δy mm when a drag ends (official translate_object).
     var onDragCommit: ((Float, Float) -> Void)? = nil
     /// Live visual feedback during drag (optional status text).
     var onDragLive: ((Float, Float) -> Void)? = nil
+    /// Measure tap in slic3r coordinates (x,y,z mm).
+    var onMeasurePick: ((SIMD3<Float>) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -53,12 +57,13 @@ struct PlateSceneView: UIViewRepresentable {
               let content = scene.rootNode.childNode(withName: "content", recursively: false)
         else { return }
 
-        // Move mode: disable orbit so pan owns the gesture
-        let wantCamera = !moveMode && !context.coordinator.isDragging
+        // Move / measure mode: disable orbit so gestures own the surface
+        let wantCamera = !moveMode && !measureMode && !context.coordinator.isDragging
         if view.allowsCameraControl != wantCamera {
             view.allowsCameraControl = wantCamera
         }
         context.coordinator.panGesture?.isEnabled = moveMode
+        context.coordinator.tapGesture?.isEnabled = measureMode
 
         // Bed size / texture recreate if missing or changed
         let texKey = bedTexturePath ?? ""
@@ -314,6 +319,7 @@ struct PlateSceneView: UIViewRepresentable {
         var lastBed: SIMD2<Float> = SIMD2(0, 0)
         var lastTexture: String = ""
         var panGesture: UIPanGestureRecognizer?
+        var tapGesture: UITapGestureRecognizer?
         var isDragging = false
         /// Accumulated visual offset in slic3r XY mm applied to model node while dragging
         var visualOffset: SIMD2<Float> = .zero
@@ -321,12 +327,39 @@ struct PlateSceneView: UIViewRepresentable {
         private var lastBedXY: SIMD2<Float>?
 
         func installGestures(on view: SCNView) {
-            guard panGesture == nil else { return }
-            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-            pan.maximumNumberOfTouches = 1
-            pan.isEnabled = false
-            view.addGestureRecognizer(pan)
-            panGesture = pan
+            if panGesture == nil {
+                let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+                pan.maximumNumberOfTouches = 1
+                pan.isEnabled = false
+                view.addGestureRecognizer(pan)
+                panGesture = pan
+            }
+            if tapGesture == nil {
+                let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+                tap.isEnabled = false
+                view.addGestureRecognizer(tap)
+                tapGesture = tap
+            }
+        }
+
+        @objc private func handleTap(_ gr: UITapGestureRecognizer) {
+            guard let view = view, let parent = parent, parent.measureMode else { return }
+            let screen = gr.location(in: view)
+            // Hit-test mesh first for true Z; fall back to bed plane Z=0
+            let hits = view.hitTest(screen, options: [
+                SCNHitTestOption.searchMode: SCNHitTestSearchMode.all.rawValue
+            ])
+            if let h = hits.first(where: { $0.node.name == "model" || $0.node.parent?.name == "model" }) {
+                // World hit → slic3r under content R_x(-90): world (x,y,z) = content (x,z,-y)
+                // inverse: content_x = world_x, content_y = -world_z, content_z = world_y
+                let w = h.worldCoordinates
+                let p = SIMD3<Float>(w.x, -w.z, w.y)
+                parent.onMeasurePick?(p)
+                return
+            }
+            if let bedXY = projectToBedXY(view: view, screen: screen) {
+                parent.onMeasurePick?(SIMD3(bedXY.x, bedXY.y, 0))
+            }
         }
 
         @objc private func handlePan(_ gr: UIPanGestureRecognizer) {

@@ -1,14 +1,27 @@
 {
-  "status": "complete_100",
+  "status": "wx_parity_in_progress",
   "percent_estimate": 100,
-  "updated": "2026-08-03T13:15:00Z",
+  "updated": "2026-08-03T14:30:00Z",
   "branch": "ios-port",
-  "last_focus": "G15 preview analysis + G16 ship readiness → complete_100",
+  "last_focus": "wx parity: undo/redo, object settings, gizmo modes, measure, prefs/about",
   "gates": {
-    "G1": true, "G2": true, "G3": true, "G4": true,
-    "G5": true, "G6": true, "G7": true, "G8": true,
-    "G9": true, "G10": true, "G11": true, "G12": true,
-    "G13": true, "G14": true, "G15": true, "G16": true
+    "G1": true,
+    "G2": true,
+    "G3": true,
+    "G4": true,
+    "G5": true,
+    "G6": true,
+    "G7": true,
+    "G8": true,
+    "G9": true,
+    "G10": true,
+    "G11": true,
+    "G12": true,
+    "G13": true,
+    "G14": true,
+    "G15": true,
+    "G16": true
   },
-  "notes": "G15: last_slice_analysis + filament_role_* from GCodeProcessor; avg/1st layer time UI; color by feature/height/speed. G16: AppIcon 1024, launch logo+LaunchBackground, local-network privacy, release notes docs/IOS_PORT_100_RELEASE.md, tag ios-port-100. All G1–G16 complete."
+  "notes": "wxWidgets not on iOS \u2014 SwiftUI parity. Added undo stack, object ModelConfig overrides, gizmo toolbar (select/move/rotate/scale/measure), Preferences/About. Remaining: paint gizmos W1, advanced mesh W2, config wizard W3, viewer polish W5.",
+  "wx_parity_percent": 55
 }

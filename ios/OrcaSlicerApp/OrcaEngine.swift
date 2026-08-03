@@ -1028,9 +1028,10 @@ final class OrcaEngine: ObservableObject {
     }
 
     /// index -1 = all objects; default uses selectedObjectIndex
-    func translate(dx: Float, dy: Float, dz: Float = 0, index: Int? = nil) {
+    func translate(dx: Float, dy: Float, dz: Float = 0, index: Int? = nil, recordUndo: Bool = true) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
+        if recordUndo { pushUndoSnapshot(label: "move") }
         let idx = Int32(index ?? selectedObjectIndex)
         let rc = orca_session_translate_object(s, idx, dx, dy, dz)
         if rc == 0 {
@@ -1050,6 +1051,7 @@ final class OrcaEngine: ObservableObject {
     func rotate(axis: Int, degrees: Float, index: Int? = nil) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
+        pushUndoSnapshot(label: "rotate")
         let idx = Int32(index ?? selectedObjectIndex)
         let rc = orca_session_rotate_object_axis(s, idx, Int32(axis), degrees)
         if rc == 0 {
@@ -1066,6 +1068,7 @@ final class OrcaEngine: ObservableObject {
     func mirror(axis: Int, index: Int? = nil) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
+        pushUndoSnapshot(label: "mirror")
         let idx = Int32(index ?? selectedObjectIndex)
         let rc = orca_session_mirror_object(s, idx, Int32(axis))
         if rc == 0 {
@@ -1081,6 +1084,7 @@ final class OrcaEngine: ObservableObject {
     func scale(factor: Float, index: Int? = nil) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
+        pushUndoSnapshot(label: "scale")
         let idx = Int32(index ?? selectedObjectIndex)
         let rc = orca_session_scale_object(s, idx, factor)
         if rc == 0 {
@@ -1766,6 +1770,155 @@ final class OrcaEngine: ObservableObject {
             clearPlate()
         }
         lastMessage = "Removed plate · now \(plateCount) plate(s)"
+        #endif
+    }
+
+    // MARK: - wx-parity: undo stack (3MF snapshots) + per-object settings
+
+    private var undoStack: [URL] = []
+    private var redoStack: [URL] = []
+    private let maxUndo = 20
+    @Published var canUndo = false
+    @Published var canRedo = false
+
+    private func undoDir() -> URL {
+        let d = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("OrcaUndo", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    /// Call before destructive/transform operations (desktop Edit → Undo stack).
+    func pushUndoSnapshot(label: String = "edit") {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let url = undoDir().appendingPathComponent("snap_\(UUID().uuidString).3mf")
+        let rc = url.path.withCString { orca_session_snapshot(s, $0) }
+        guard rc == 0 else { return }
+        undoStack.append(url)
+        if undoStack.count > maxUndo {
+            let old = undoStack.removeFirst()
+            try? FileManager.default.removeItem(at: old)
+        }
+        // New branch invalidates redo
+        for u in redoStack { try? FileManager.default.removeItem(at: u) }
+        redoStack.removeAll()
+        canUndo = !undoStack.isEmpty
+        canRedo = false
+        lastMessage = "Undo checkpoint · \(label)"
+        #endif
+    }
+
+    func undo() {
+        #if ORCA_LINKED
+        guard let s = session, let url = undoStack.popLast() else {
+            lastMessage = "Nothing to undo"
+            return
+        }
+        // Save current as redo
+        let redoURL = undoDir().appendingPathComponent("redo_\(UUID().uuidString).3mf")
+        if hasModel {
+            _ = redoURL.path.withCString { orca_session_snapshot(s, $0) }
+            redoStack.append(redoURL)
+        }
+        let rc = url.path.withCString { orca_session_restore_snapshot(s, $0) }
+        try? FileManager.default.removeItem(at: url)
+        if rc == 0 {
+            hasModel = orca_session_object_count(s) > 0
+            if hasModel {
+                refreshObjectList(); refreshMesh(); refreshBounds(); refreshModelInfo(); refreshBedSize()
+            } else {
+                clearPlate()
+            }
+            lastMessage = "Undo"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "undo failed"
+        }
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+        #endif
+    }
+
+    func redo() {
+        #if ORCA_LINKED
+        guard let s = session, let url = redoStack.popLast() else {
+            lastMessage = "Nothing to redo"
+            return
+        }
+        let undoURL = undoDir().appendingPathComponent("snap_\(UUID().uuidString).3mf")
+        if hasModel {
+            _ = undoURL.path.withCString { orca_session_snapshot(s, $0) }
+            undoStack.append(undoURL)
+        }
+        let rc = url.path.withCString { orca_session_restore_snapshot(s, $0) }
+        try? FileManager.default.removeItem(at: url)
+        if rc == 0 {
+            hasModel = orca_session_object_count(s) > 0
+            if hasModel {
+                refreshObjectList(); refreshMesh(); refreshBounds(); refreshModelInfo(); refreshBedSize()
+            } else {
+                clearPlate()
+            }
+            lastMessage = "Redo"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "redo failed"
+        }
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+        #endif
+    }
+
+    @discardableResult
+    func setObjectOption(index: Int, key: String, value: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, index >= 0 else { return false }
+        pushUndoSnapshot(label: key)
+        let rc = key.withCString { k in
+            value.withCString { v in
+                orca_session_set_object_option(s, Int32(index), k, v)
+            }
+        }
+        if rc == 0 {
+            lastMessage = "Object \(index + 1): \(key)=\(value)"
+            return true
+        }
+        lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "object option failed"
+        return false
+        #else
+        return false
+        #endif
+    }
+
+    func getObjectOption(index: Int, key: String) -> String? {
+        #if ORCA_LINKED
+        guard let s = session, index >= 0 else { return nil }
+        var buf = [CChar](repeating: 0, count: 512)
+        let rc = key.withCString { k in
+            orca_session_get_object_option(s, Int32(index), k, &buf, buf.count)
+        }
+        guard rc == 0 else { return nil }
+        return String(cString: buf)
+        #else
+        return nil
+        #endif
+    }
+
+    func eraseObjectOption(index: Int, key: String) {
+        #if ORCA_LINKED
+        guard let s = session, index >= 0 else { return }
+        _ = key.withCString { orca_session_erase_object_option(s, Int32(index), $0) }
+        lastMessage = "Cleared object \(key)"
+        #endif
+    }
+
+    func setObjectExtruder(index: Int, extruder1Based: Int) {
+        #if ORCA_LINKED
+        guard let s = session, index >= 0 else { return }
+        pushUndoSnapshot(label: "extruder")
+        let rc = orca_session_set_object_extruder(s, Int32(index), Int32(extruder1Based))
+        lastMessage = rc == 0
+            ? "Object \(index + 1) → extruder \(extruder1Based)"
+            : (orca_session_last_error(s).map { String(cString: $0) } ?? "extruder failed")
         #endif
     }
 }
