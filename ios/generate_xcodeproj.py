@@ -56,6 +56,12 @@ ios_ld = (
 )
 
 
+# Team for Automatic signing (override with ORCA_IOS_DEVELOPMENT_TEAM).
+# Empty → Xcode shows "Signing requires a development team" until set in UI.
+import os as _os
+DEVELOPMENT_TEAM = _os.environ.get("ORCA_IOS_DEVELOPMENT_TEAM", "6PU4X4CG8B")
+
+
 def tgt_settings(name: str) -> str:
     # Base: no engine. SDK-conditional ORCA_LINKED + link flags when bundles exist.
     lines = [
@@ -67,7 +73,7 @@ def tgt_settings(name: str) -> str:
         "\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;",
         "\t\t\t\tCODE_SIGN_STYLE = Automatic;",
         "\t\t\t\tCURRENT_PROJECT_VERSION = 1;",
-        '\t\t\t\tDEVELOPMENT_TEAM = "";',
+        f'\t\t\t\tDEVELOPMENT_TEAM = "{DEVELOPMENT_TEAM}";',
         "\t\t\t\tENABLE_PREVIEWS = YES;",
         "\t\t\t\tGENERATE_INFOPLIST_FILE = NO;",
         "\t\t\t\tHEADER_SEARCH_PATHS = (",
@@ -86,6 +92,10 @@ def tgt_settings(name: str) -> str:
         "\t\t\t\t);",
         "\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;",
         "\t\t\t\tMARKETING_VERSION = 2.5.0;",
+        # Engine bundles are arm64-only (Apple Silicon). Exclude x86_64 so Xcode
+        # does not try to link Intel-sim slices that do not exist → linker fail.
+        '\t\t\t\t"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = "x86_64 i386";',
+        "\t\t\t\tONLY_ACTIVE_ARCH = YES;",
         "\t\t\t\tOTHER_LDFLAGS = (",
         '\t\t\t\t\t"$(inherited)",',
         "\t\t\t\t);",
@@ -122,6 +132,9 @@ def tgt_settings(name: str) -> str:
             f'\t\t\t\t\t"{ios_ld}",',
             "\t\t\t\t);",
             '\t\t\t\t"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = "ORCA_LINKED";',
+            # Force arm64 sim slices when Xcode would otherwise prefer x86_64
+            '\t\t\t\t"ARCHS[sdk=iphonesimulator*]" = arm64;',
+            '\t\t\t\t"VALID_ARCHS[sdk=iphonesimulator*]" = arm64;',
         ]
     if has_ios_dev_engine:
         lines += [
