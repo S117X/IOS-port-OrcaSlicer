@@ -1,8 +1,8 @@
 {
   "status": "in_progress",
-  "updated": "2026-08-02T23:15:00Z",
+  "updated": "2026-08-02T23:30:00Z",
   "branch": "ios-port",
-  "last_focus": "process enum dropdowns (brim_type, support, ironing_type, seam, wall_generator)",
+  "last_focus": "process enum dropdowns + object list + official libnest2d arrange",
   "gates": {
     "G1_engine_build": true,
     "G2_profiles": false,
@@ -13,5 +13,5 @@
     "G7_project": false,
     "G8_quality": false
   },
-  "notes": "Process sheet now uses official enum pickers. Remaining: object list, libnest2d arrange, open 3MF, Moonraker start/status, full settings browser, compatible filter."
+  "notes": "Process pickers fixed (brim dropdown etc). Object select/delete/duplicate UI. arrange uses arrange_objects/libnest2d. Remaining: full settings browser, open 3MF, Moonraker start/status, preview features, user presets, multi-plate."
 }

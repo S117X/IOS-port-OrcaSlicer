@@ -29,6 +29,8 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/ModelArrange.hpp"
+#include "libslic3r/Arrange.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -657,45 +659,39 @@ int orca_session_arrange(orca_session_t *s)
     if (!s || !s->has_model)
         return -1;
     try {
-        // Simple row arrange with 10mm gap (full libnest2d arrange later)
-        double x = 10.0, y = 10.0, row_h = 0.0;
-        double bed_w = 220.0, bed_h = 220.0;
-        if (const ConfigOptionPoints *pa = s->config.option<ConfigOptionPoints>("printable_area")) {
-            if (!pa->values.empty()) {
-                BoundingBoxf bedbb;
-                for (const Vec2d &p : pa->values)
-                    bedbb.merge(Vec2d(p.x(), p.y()));
-                bed_w = bedbb.max.x() - bedbb.min.x();
-                bed_h = bedbb.max.y() - bedbb.min.y();
-                x = bedbb.min.x() + 10.0;
-                y = bedbb.min.y() + 10.0;
-            }
+        ensure_default_config(s);
+        s->model.add_default_instances();
+
+        // Official libnest2d path (same family as desktop arrange_objects)
+        Points bedpts = get_bed_shape(s->config);
+        if (bedpts.size() < 3) {
+            // Fallback 220² bed if printable_area missing
+            bedpts = {
+                Point(scaled(0.), scaled(0.)),
+                Point(scaled(220.), scaled(0.)),
+                Point(scaled(220.), scaled(220.)),
+                Point(scaled(0.), scaled(220.))
+            };
         }
-        const double gap = 10.0;
+        BoundingBox bedbb = get_extents(bedpts);
+        arrangement::ArrangeParams params;
+        // min_obj_distance is scaled; 6mm gap between objects is reasonable mobile default
+        params.min_obj_distance = scaled(6.);
+        params.accuracy = 0.65f;
+        params.parallel = true;
+
+        // Soft virtual-bed callback: do not throw if some items need a second plate
+        auto vfn = [](arrangement::ArrangePolygon &ap) {
+            if (ap.bed_idx == arrangement::UNARRANGED)
+                ap.bed_idx = 0;
+        };
+        bool ok = arrange_objects(s->model, bedbb, params, vfn);
+        if (!ok)
+            s->set_error("arrange: some objects may not fit a single plate");
         for (ModelObject *obj : s->model.objects) {
-            if (!obj || obj->instances.empty()) continue;
-            BoundingBoxf3 bb = obj->instance_bounding_box(0);
-            double w = bb.size().x();
-            double h = bb.size().y();
-            if (x + w > bed_w - 5.0) {
-                x = 10.0;
-                y += row_h + gap;
-                row_h = 0.0;
-            }
-            if (y + h > bed_h - 5.0) {
-                // overflow: still place, engine may warn on slice
-            }
-            Vec3d cur = bb.center();
-            Vec3d target(x + w * 0.5, y + h * 0.5, cur.z());
-            Vec3d delta = target - cur;
-            for (ModelInstance *inst : obj->instances) {
-                if (!inst) continue;
-                inst->set_offset(inst->get_offset() + delta);
-            }
+            if (!obj) continue;
             obj->invalidate_bounding_box();
             obj->ensure_on_bed();
-            x += w + gap;
-            row_h = std::max(row_h, h);
         }
         return 0;
     } catch (const std::exception &ex) {

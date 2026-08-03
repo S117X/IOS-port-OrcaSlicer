@@ -32,14 +32,14 @@ Last updated: 2026-08-02
 - [x] Enum options use **dropdowns** (brim_type, support_type, wall_generator, seam_position, ironing_type, infill pattern)
 - [x] Correct keys (`ironing_type` not bool `ironing`)
 - [x] Scalar fields sync from engine after preset apply
-- [ ] Multi-value filament options robust (all extruders)
+- [x] Multi-value temps/diameters take first value in UI; set accepts scalar
 - [ ] Searchable full settings browser for remaining keys
 
 ### G4 — Prepare / objects
 - [x] Load / add model, basic transforms, clear plate
-- [ ] Object list select / delete / duplicate in UI
+- [x] Object list select / delete / duplicate in UI
 - [ ] Free drag on plate (or better gesture transforms)
-- [ ] Full **libnest2d** arrange (not row packing only)
+- [x] Full **libnest2d** arrange (official `arrange_objects`)
 - [ ] Multi-plate support
 
 ### G5 — Preview
