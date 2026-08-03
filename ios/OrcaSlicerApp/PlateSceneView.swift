@@ -12,6 +12,9 @@ import UIKit
 /// Interactive build plate with official-engine mesh geometry + optional G-code paths.
 struct PlateSceneView: UIViewRepresentable {
     var mesh: MeshGeometry?
+    /// Per-object meshes for tap-to-select (same order as engine.objectNames).
+    var objectMeshes: [MeshGeometry] = []
+    var selectedObjectIndex: Int = -1
     var gcodeNode: SCNNode? = nil
     var showGCode: Bool = false
     var bedSize: SIMD2<Float> = SIMD2(220, 220)
@@ -20,6 +23,8 @@ struct PlateSceneView: UIViewRepresentable {
     var accent: UIColor = UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
     /// Prepare tab: pan on bed plane moves selected object(s) in mm (slic3r XY).
     var moveMode: Bool = false
+    /// Tap object to select; drag on object to move (without requiring Move gizmo).
+    var selectMode: Bool = true
     /// Measure gizmo: tap places points in slic3r XYZ (mm).
     var measureMode: Bool = false
     /// Paint gizmo: tap/drag paints facets via libslic3r FacetsAnnotation.
@@ -36,6 +41,8 @@ struct PlateSceneView: UIViewRepresentable {
     var onMeasurePick: ((SIMD3<Float>) -> Void)? = nil
     /// Paint hit in slic3r XYZ mm (first stroke of a gesture sets recordUndo via parent).
     var onPaintHit: ((SIMD3<Float>, Bool /*isBegin*/) -> Void)? = nil
+    /// User tapped an object on the plate.
+    var onSelectObject: ((Int) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -65,13 +72,15 @@ struct PlateSceneView: UIViewRepresentable {
               let content = scene.rootNode.childNode(withName: "content", recursively: false)
         else { return }
 
-        // Move / measure / paint: disable orbit so gestures own the surface
+        // Move / measure / paint: disable orbit so gestures own the surface.
+        // Select mode keeps orbit; long-press-free drag starts only after hitting an object.
         let wantCamera = !moveMode && !measureMode && !paintMode && !context.coordinator.isDragging
         if view.allowsCameraControl != wantCamera {
             view.allowsCameraControl = wantCamera
         }
-        context.coordinator.panGesture?.isEnabled = moveMode || paintMode
-        context.coordinator.tapGesture?.isEnabled = measureMode || paintMode
+        // Pan for move gizmo, paint, or select (drag-on-object to move)
+        context.coordinator.panGesture?.isEnabled = moveMode || paintMode || selectMode
+        context.coordinator.tapGesture?.isEnabled = measureMode || paintMode || selectMode
 
         // Bed size / texture recreate if missing or changed
         let texKey = bedTexturePath ?? ""
@@ -94,20 +103,60 @@ struct PlateSceneView: UIViewRepresentable {
             }
         }
 
-        // Mesh model — skip rebuild while dragging (node is offset live)
-        let meshKey = mesh.map { "\($0.vertexCount)-\($0.indices.count)-\($0.min.x)-\($0.max.x)-\($0.min.y)-\($0.max.y)" } ?? "nil"
+        // Mesh model(s) — per-object nodes for hit-test/select; skip rebuild while dragging
+        let perKey = objectMeshes.map { "\($0.vertexCount)-\($0.min.x)-\($0.max.x)" }.joined(separator: "|")
+        let meshKey = (mesh.map { "\($0.vertexCount)-\($0.indices.count)-\($0.min.x)-\($0.max.x)" } ?? "nil")
+            + "|sel=\(selectedObjectIndex)|objs=\(perKey)"
         if !context.coordinator.isDragging, context.coordinator.lastMeshKey != meshKey {
             content.childNode(withName: "model", recursively: false)?.removeFromParentNode()
-            if let mesh {
+            let root = SCNNode()
+            root.name = "model"
+            if !objectMeshes.isEmpty {
+                for (i, om) in objectMeshes.enumerated() {
+                    guard om.vertexCount > 0 else { continue }
+                    let selected = (i == selectedObjectIndex)
+                    let color = selected
+                        ? UIColor(red: 0.15, green: 0.85, blue: 0.75, alpha: 1)
+                        : accent
+                    let node = om.makeNode(color: color)
+                    node.name = "object_\(i)"
+                    if selected {
+                        node.geometry?.firstMaterial?.emission.contents = UIColor(
+                            red: 0, green: 0.35, blue: 0.3, alpha: 1
+                        )
+                    }
+                    root.addChildNode(node)
+                }
+                content.addChildNode(root)
+                if let mesh {
+                    context.coordinator.frameCamera(view: view, mesh: mesh, bedSize: bedSize)
+                }
+            } else if let mesh {
                 let node = mesh.makeNode(color: accent)
-                node.name = "model"
-                content.addChildNode(node)
+                node.name = "object_0"
+                root.addChildNode(node)
+                content.addChildNode(root)
                 context.coordinator.frameCamera(view: view, mesh: mesh, bedSize: bedSize)
             } else {
                 context.coordinator.frameCameraOnBed(view: view, bedSize: bedSize)
             }
             context.coordinator.lastMeshKey = meshKey
             context.coordinator.visualOffset = .zero
+        } else if !context.coordinator.isDragging {
+            // Selection highlight only (no full rebuild)
+            if let root = content.childNode(withName: "model", recursively: false) {
+                for child in root.childNodes {
+                    guard let name = child.name, name.hasPrefix("object_"),
+                          let idx = Int(name.dropFirst("object_".count)) else { continue }
+                    let selected = idx == selectedObjectIndex
+                    child.geometry?.firstMaterial?.diffuse.contents = selected
+                        ? UIColor(red: 0.15, green: 0.85, blue: 0.75, alpha: 1)
+                        : accent
+                    child.geometry?.firstMaterial?.emission.contents = selected
+                        ? UIColor(red: 0, green: 0.35, blue: 0.3, alpha: 1)
+                        : UIColor.black
+                }
+            }
         }
 
         // G-code toolpaths (Preview tab) — also under content (Z-up)
@@ -387,6 +436,25 @@ struct PlateSceneView: UIViewRepresentable {
             return nil
         }
 
+        /// Resolve object index from SceneKit hit (node name object_N)
+        private func hitObjectIndex(view: SCNView, screen: CGPoint) -> Int? {
+            let hits = view.hitTest(screen, options: [
+                SCNHitTestOption.searchMode: SCNHitTestSearchMode.all.rawValue
+            ])
+            for h in hits {
+                var n: SCNNode? = h.node
+                while let node = n {
+                    if let name = node.name, name.hasPrefix("object_"),
+                       let idx = Int(name.dropFirst("object_".count)) {
+                        return idx
+                    }
+                    if node.name == "model" { break }
+                    n = node.parent
+                }
+            }
+            return nil
+        }
+
         @objc private func handleTap(_ gr: UITapGestureRecognizer) {
             guard let view = view, let parent = parent else { return }
             let screen = gr.location(in: view)
@@ -396,14 +464,19 @@ struct PlateSceneView: UIViewRepresentable {
                 }
                 return
             }
-            guard parent.measureMode else { return }
-            // Hit-test mesh first for true Z; fall back to bed plane Z=0
-            if let p = hitModelSlic3r(view: view, screen: screen) {
-                parent.onMeasurePick?(p)
+            if parent.measureMode {
+                if let p = hitModelSlic3r(view: view, screen: screen) {
+                    parent.onMeasurePick?(p)
+                    return
+                }
+                if let bedXY = projectToBedXY(view: view, screen: screen) {
+                    parent.onMeasurePick?(SIMD3(bedXY.x, bedXY.y, 0))
+                }
                 return
             }
-            if let bedXY = projectToBedXY(view: view, screen: screen) {
-                parent.onMeasurePick?(SIMD3(bedXY.x, bedXY.y, 0))
+            // Tap object on plate → select (desktop plater click)
+            if parent.selectMode, let idx = hitObjectIndex(view: view, screen: screen) {
+                parent.onSelectObject?(idx)
             }
         }
 
@@ -423,10 +496,9 @@ struct PlateSceneView: UIViewRepresentable {
                         parent.onPaintHit?(p, true)
                     }
                 case .changed:
-                    // Throttle by screen distance to avoid flooding
                     if let last = lastPaintScreen {
                         let dx = pt.x - last.x, dy = pt.y - last.y
-                        if dx * dx + dy * dy < 36 { return } // ~6pt
+                        if dx * dx + dy * dy < 36 { return }
                     }
                     lastPaintScreen = pt
                     if let p = hitModelSlic3r(view: view, screen: pt) {
@@ -436,18 +508,31 @@ struct PlateSceneView: UIViewRepresentable {
                     isDragging = false
                     paintStrokeActive = false
                     lastPaintScreen = nil
-                    view.allowsCameraControl = false
+                    view.allowsCameraControl = !(parent.moveMode)
                 default:
                     break
                 }
                 return
             }
 
-            guard parent.moveMode else { return }
+            // Move: explicit Move gizmo, OR select mode drag that starts on an object
+            let canMove = parent.moveMode || parent.selectMode
+            guard canMove else { return }
 
             switch gr.state {
             case .began:
-                guard let bedXY = projectToBedXY(view: view, screen: pt) else { return }
+                // Prefer hit on object — select it, then drag. Move gizmo also allows bed drag.
+                if let idx = hitObjectIndex(view: view, screen: pt) {
+                    parent.onSelectObject?(idx)
+                } else if !parent.moveMode {
+                    // Select mode on empty bed: fail this pan so SceneKit orbit can run
+                    gr.state = .failed
+                    return
+                }
+                guard let bedXY = projectToBedXY(view: view, screen: pt) else {
+                    gr.state = .failed
+                    return
+                }
                 isDragging = true
                 view.allowsCameraControl = false
                 dragStartBedXY = bedXY
@@ -455,24 +540,25 @@ struct PlateSceneView: UIViewRepresentable {
                 visualOffset = .zero
 
             case .changed:
-                guard let start = dragStartBedXY,
+                guard isDragging,
+                      let start = dragStartBedXY,
                       let bedXY = projectToBedXY(view: view, screen: pt)
                 else { return }
                 let total = SIMD2(bedXY.x - start.x, bedXY.y - start.y)
                 visualOffset = total
-                applyVisualOffset(total)
+                applyVisualOffset(total, selectedIndex: parent.selectedObjectIndex)
                 lastBedXY = bedXY
                 parent.onDragLive?(total.x, total.y)
 
             case .ended, .cancelled, .failed:
                 let total = visualOffset
+                let wasDragging = isDragging
                 isDragging = false
                 dragStartBedXY = nil
                 lastBedXY = nil
-                // Reset visual offset; engine commit will rebuild mesh at new position
-                applyVisualOffset(.zero)
+                applyVisualOffset(.zero, selectedIndex: parent.selectedObjectIndex)
                 visualOffset = .zero
-                if abs(total.x) > 0.05 || abs(total.y) > 0.05 {
+                if wasDragging, abs(total.x) > 0.05 || abs(total.y) > 0.05 {
                     parent.onDragCommit?(total.x, total.y)
                 }
                 view.allowsCameraControl = !(parent.moveMode)
@@ -502,12 +588,21 @@ struct PlateSceneView: UIViewRepresentable {
             return SIMD2(slic3rX, slic3rY)
         }
 
-        private func applyVisualOffset(_ offset: SIMD2<Float>) {
+        private func applyVisualOffset(_ offset: SIMD2<Float>, selectedIndex: Int = -1) {
             guard let content = view?.scene?.rootNode.childNode(withName: "content", recursively: false),
                   let model = content.childNode(withName: "model", recursively: false)
             else { return }
-            // Model is in content/Z-up space; offset is slic3r XY
-            model.position = SCNVector3(offset.x, offset.y, 0)
+            // Offset only the selected object node when possible; else whole group
+            if selectedIndex >= 0,
+               let obj = model.childNode(withName: "object_\(selectedIndex)", recursively: false) {
+                obj.position = SCNVector3(offset.x, offset.y, 0)
+                // Reset siblings
+                for child in model.childNodes where child.name != "object_\(selectedIndex)" {
+                    child.position = SCNVector3Zero
+                }
+            } else {
+                model.position = SCNVector3(offset.x, offset.y, 0)
+            }
         }
 
         /// World-space target of bed center after content R_x(-90): (cx, 0, -cy)

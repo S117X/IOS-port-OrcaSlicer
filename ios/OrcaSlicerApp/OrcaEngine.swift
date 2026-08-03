@@ -27,11 +27,13 @@ final class OrcaEngine: ObservableObject {
     /// Filament by feature/role: (name, meters, grams)
     @Published var filamentByRole: [(name: String, meters: Float, grams: Float)] = []
     @Published var mesh: MeshGeometry?
+    /// Per-object meshes for plate hit-test / selection (same order as objectNames)
+    @Published var objectMeshes: [MeshGeometry] = []
     @Published var gcodePathNode: SCNNode?
     @Published var gcodeGeometry: GCodePathGeometry?
     @Published var objectCount: Int = 0
     @Published var objectNames: [String] = []
-    @Published var selectedObjectIndex: Int = -1 // -1 = all
+    @Published var selectedObjectIndex: Int = -1 // -1 = all / none
     @Published var boundsText: String = ""
     /// Model AABB Z (mm) for cut mid-height default
     @Published var modelMinZ: Float = 0
@@ -971,8 +973,10 @@ final class OrcaEngine: ObservableObject {
         #if ORCA_LINKED
         guard let s = session, hasModel else {
             mesh = nil
+            objectMeshes = []
             return
         }
+        // Combined mesh (framing + single-object fallback)
         var posPtr: UnsafeMutablePointer<Float>?
         var idxPtr: UnsafeMutablePointer<UInt32>?
         var vcount: Int = 0
@@ -984,6 +988,7 @@ final class OrcaEngine: ObservableObject {
         }
         guard rc == 0, let posPtr, let idxPtr, vcount > 0, icount > 0 else {
             mesh = nil
+            objectMeshes = []
             return
         }
         let positions = Array(UnsafeBufferPointer(start: posPtr, count: vcount * 3))
@@ -996,7 +1001,48 @@ final class OrcaEngine: ObservableObject {
             bmax = max(bmax, p)
         }
         mesh = MeshGeometry(positions: positions, indices: indices, min: bmin, max: bmax)
+
+        // Per-object meshes so the user can tap/select on the plate
+        let n = Int(orca_session_object_count(s))
+        var per: [MeshGeometry] = []
+        per.reserveCapacity(max(n, 0))
+        for oi in 0..<n {
+            var oPos: UnsafeMutablePointer<Float>?
+            var oIdx: UnsafeMutablePointer<UInt32>?
+            var ov: Int = 0, oiCount: Int = 0
+            let orc = orca_session_export_object_mesh(s, Int32(oi), &oPos, &ov, &oIdx, &oiCount)
+            defer {
+                if let p = oPos { orca_free(p) }
+                if let i = oIdx { orca_free(i) }
+            }
+            guard orc == 0, let oPos, let oIdx, ov > 0, oiCount > 0 else {
+                per.append(MeshGeometry(positions: [], indices: [], min: .zero, max: .zero))
+                continue
+            }
+            let pos = Array(UnsafeBufferPointer(start: oPos, count: ov * 3))
+            let ind = Array(UnsafeBufferPointer(start: oIdx, count: oiCount))
+            var omin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var omax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            for i in 0..<ov {
+                let p = SIMD3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])
+                omin = min(omin, p)
+                omax = max(omax, p)
+            }
+            per.append(MeshGeometry(positions: pos, indices: ind, min: omin, max: omax))
+        }
+        objectMeshes = per
         #endif
+    }
+
+    func selectObject(at index: Int) {
+        guard index >= 0, index < objectCount || index < objectMeshes.count else {
+            selectedObjectIndex = -1
+            lastMessage = "Selection cleared"
+            return
+        }
+        selectedObjectIndex = index
+        let name = objectNames.indices.contains(index) ? objectNames[index] : "Object \(index + 1)"
+        lastMessage = "Selected \(name)"
     }
 
     func refreshBounds() {

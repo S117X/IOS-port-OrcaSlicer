@@ -1971,17 +1971,23 @@ struct OrcaRootView: View {
         ZStack {
             PlateSceneView(
                 mesh: engine.mesh,
+                objectMeshes: engine.objectMeshes,
+                selectedObjectIndex: engine.selectedObjectIndex,
                 gcodeNode: engine.gcodePathNode,
                 showGCode: mainTab == .preview && engine.gcodePathNode != nil,
                 bedSize: engine.bedSize,
                 bedTexturePath: engine.bedTexturePath,
                 accent: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1),
                 moveMode: (moveMode || gizmoMode == .move) && mainTab == .prepare && engine.hasModel,
+                // Tap-to-select + drag-on-object always on Prepare (except measure/paint gizmos)
+                selectMode: mainTab == .prepare && engine.hasModel
+                    && gizmoMode != .measure && !isPaintGizmo,
                 measureMode: gizmoMode == .measure && mainTab == .prepare,
                 paintMode: isPaintGizmo && mainTab == .prepare && engine.hasModel,
                 paintOverlay: isPaintGizmo ? engine.paintOverlayMesh : nil,
                 paintOverlayColor: paintOverlayUIColor,
                 onDragCommit: { dx, dy in
+                    // Move selected object (index from engine.selectedObjectIndex)
                     engine.translate(dx: dx, dy: dy, recordUndo: true)
                     status = engine.lastMessage
                 },
@@ -1989,7 +1995,11 @@ struct OrcaRootView: View {
                     status = String(format: "Drag Δ%.1f, %.1f mm", dx, dy)
                 },
                 onMeasurePick: { handleMeasurePick($0) },
-                onPaintHit: { pt, isBegin in handlePaintHit(pt, isBegin: isBegin) }
+                onPaintHit: { pt, isBegin in handlePaintHit(pt, isBegin: isBegin) },
+                onSelectObject: { idx in
+                    engine.selectObject(at: idx)
+                    status = engine.lastMessage
+                }
             )
             .overlay(alignment: .topLeading) {
                 hintOverlay.padding(12)
