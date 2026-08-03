@@ -20,6 +20,7 @@ LIBS=(
   "$BUILD/deps_src/miniz/libminiz_static.a"
   "$BUILD/deps_src/glu-libtess/libglu-libtess.a"
   "$BUILD/deps_src/mcut/libmcut.a"
+  "$BUILD/deps_src/qhull/libqhullstatic.a"
   "$BUILD/deps_src/qoi/libqoi.a"
   "$BUILD/lib/libsemver.a"
 )

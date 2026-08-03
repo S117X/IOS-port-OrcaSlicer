@@ -114,11 +114,12 @@ Success = unit test on device: **slice a known STL → G-code matches desktop he
 
 ### Still required
 
-1. **Physical device** (`iphoneos`) deps + engine (not built yet — only Simulator arm64).  
+1. ~~**Physical device** (`iphoneos`) deps + engine~~ done — `build-ios-iphoneos-arm64/engine_bundle`.  
 2. Fuller profile inheritance (official JSON inherits chains).  
 3. Metal/libvgcode-class toolpath preview (current path is SceneKit polylines).  
 4. Full desktop GUI parity (years of wx rebind — not the mobile product path).  
-5. AGPL compliance strategy before any store distribution.
+5. AGPL compliance strategy before any store distribution.  
+6. Code-sign + install on a physical iPhone (team ID / free provisioning).
 
 ## Immediate next engineering steps
 
@@ -127,8 +128,8 @@ Success = unit test on device: **slice a known STL → G-code matches desktop he
 3. ~~Swift host shell~~ done + SceneKit plate.  
 4. ~~iOS Simulator deps + link ORCA_LINKED~~ done.  
 5. ~~Real mesh + orbit + G-code preview~~ done.  
-6. Build **iphoneos** dep prefix + device install.  
-7. Richer G-code feature-type colors / multi-plate.
+6. ~~Build **iphoneos** dep prefix + engine~~ done.  
+7. Device install (signing) + richer multi-plate UI.
 
 ---
 

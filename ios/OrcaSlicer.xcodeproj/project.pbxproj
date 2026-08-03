@@ -6,13 +6,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		00D04C5B28FA439F972D6483 /* OrcaSlicerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OrcaSlicerApp.swift */; };
-		C1C5D08269C945A484148BF1 /* OrcaEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* OrcaEngine.swift */; };
-		649EEDB7C5794E47B026C457 /* PlateSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PlateSceneView.swift */; };
-		6AD4382D9E974E1F8EB8D20C /* sample_cube_20mm.stl in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* sample_cube_20mm.stl */; };
-		73CBA32B4DB34ECC98577F6F /* OrcaSlicerLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* OrcaSlicerLogo.png */; };
-		8F4502A5A1B24395B948C9A8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; };
-		BA7C40EBD3E949E09D40B9E0 /* process_0.20mm_Standard.json in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; };
+		AED81AD4ADEE4B7BA202CC9C /* OrcaSlicerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OrcaSlicerApp.swift */; };
+		3E6A05795D6845F1AD58652E /* OrcaEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* OrcaEngine.swift */; };
+		9EA9AF9F3C284FF3AEFA1A99 /* PlateSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PlateSceneView.swift */; };
+		08943D8A003348C789D4488C /* sample_cube_20mm.stl in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* sample_cube_20mm.stl */; };
+		4E568A402B8B4376AB1A727A /* OrcaSlicerLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* OrcaSlicerLogo.png */; };
+		DDE238A458A9450191858168 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; };
+		2FCF4FDFBF81444F9A5BCA77 /* process_0.20mm_Standard.json in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,20 +25,20 @@
 		A10000000000000000000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A10000000000000000000008 /* PlateSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateSceneView.swift; sourceTree = "<group>"; };
 		A10000000000000000000009 /* process_0.20mm_Standard.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.20mm_Standard.json; sourceTree = "<group>"; };
-		68BDD03ED4DE4DC3BE74C935 /* OrcaSlicer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F1BB315D151247B1B5CA362A /* OrcaSlicer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
-		472D2074D73C4CEFB16F4BA3 = {
+		C7F9A042109543268744B55D = {
 			isa = PBXGroup;
 			children = (
-				DF10B1080C094B9EABE4C148,
+				889503CD14A4413982553AF1,
 				A10000000000000000000005 /* sample_cube_20mm.stl */,
-				FB99AB85F6DF4C589190ABAA,
+				55F78F21CB6A41E488E0167C,
 			);
 			sourceTree = "<group>";
 		};
-		DF10B1080C094B9EABE4C148 = {
+		889503CD14A4413982553AF1 = {
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000001 /* OrcaSlicerApp.swift */,
@@ -53,10 +53,10 @@
 			path = OrcaSlicerApp;
 			sourceTree = "<group>";
 		};
-		FB99AB85F6DF4C589190ABAA = {
+		55F78F21CB6A41E488E0167C = {
 			isa = PBXGroup;
 			children = (
-				68BDD03ED4DE4DC3BE74C935 /* OrcaSlicer.app */,
+				F1BB315D151247B1B5CA362A /* OrcaSlicer.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -64,13 +64,13 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		FD91D26745E247CAB8CE0AB9 /* OrcaSlicer */ = {
+		4DDEF81D0E46494ABD976344 /* OrcaSlicer */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = EBE47105D7ED4EC3BB97CD15 /* Build configuration list for PBXNativeTarget "OrcaSlicer" */;
+			buildConfigurationList = ACE8E24819B84A15BA5A2FF7 /* Build configuration list for PBXNativeTarget "OrcaSlicer" */;
 			buildPhases = (
-				5E9E871FD60B408F88184C47 /* Sources */,
-				0BBCFF56CB8B4971ADD0B977 /* Frameworks */,
-				A2E42FBAB78F402DB416AF41 /* Resources */,
+				5063836CBED846F29B8E26EB /* Sources */,
+				00528AFB96764BD5BFCD703F /* Frameworks */,
+				F7B0A6FFF66B4BB7A17BABE2 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -78,20 +78,20 @@
 			);
 			name = OrcaSlicer;
 			productName = OrcaSlicer;
-			productReference = 68BDD03ED4DE4DC3BE74C935 /* OrcaSlicer.app */;
+			productReference = F1BB315D151247B1B5CA362A /* OrcaSlicer.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		3469ABB7E83549BD9CC61E3E /* Project object */ = {
+		A85E16996F0E490AAF2779FE /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1600;
 			};
-			buildConfigurationList = 9F6E124D463642C3B35D7DA5 /* Build configuration list for PBXProject "OrcaSlicer" */;
+			buildConfigurationList = 553C2B1092E54FEC926E2505 /* Build configuration list for PBXProject "OrcaSlicer" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -99,32 +99,32 @@
 				en,
 				Base,
 			);
-			mainGroup = 472D2074D73C4CEFB16F4BA3;
-			productRefGroup = FB99AB85F6DF4C589190ABAA;
+			mainGroup = C7F9A042109543268744B55D;
+			productRefGroup = 55F78F21CB6A41E488E0167C;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				FD91D26745E247CAB8CE0AB9 /* OrcaSlicer */,
+				4DDEF81D0E46494ABD976344 /* OrcaSlicer */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A2E42FBAB78F402DB416AF41 /* Resources */ = {
+		F7B0A6FFF66B4BB7A17BABE2 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				6AD4382D9E974E1F8EB8D20C /* sample_cube_20mm.stl in Resources */,
-				73CBA32B4DB34ECC98577F6F /* OrcaSlicerLogo.png in Resources */,
-				8F4502A5A1B24395B948C9A8 /* Assets.xcassets in Resources */,
-				BA7C40EBD3E949E09D40B9E0 /* process_0.20mm_Standard.json in Resources */,
+				08943D8A003348C789D4488C /* sample_cube_20mm.stl in Resources */,
+				4E568A402B8B4376AB1A727A /* OrcaSlicerLogo.png in Resources */,
+				DDE238A458A9450191858168 /* Assets.xcassets in Resources */,
+				2FCF4FDFBF81444F9A5BCA77 /* process_0.20mm_Standard.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		0BBCFF56CB8B4971ADD0B977 /* Frameworks */ = {
+		00528AFB96764BD5BFCD703F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -134,20 +134,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		5E9E871FD60B408F88184C47 /* Sources */ = {
+		5063836CBED846F29B8E26EB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				00D04C5B28FA439F972D6483 /* OrcaSlicerApp.swift in Sources */,
-				C1C5D08269C945A484148BF1 /* OrcaEngine.swift in Sources */,
-				649EEDB7C5794E47B026C457 /* PlateSceneView.swift in Sources */,
+				AED81AD4ADEE4B7BA202CC9C /* OrcaSlicerApp.swift in Sources */,
+				3E6A05795D6845F1AD58652E /* OrcaEngine.swift in Sources */,
+				9EA9AF9F3C284FF3AEFA1A99 /* PlateSceneView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		0070B825D39C4E658789F62A /* Debug */ = {
+		49CB35E64A9E4C55B87F8855 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -161,7 +161,7 @@
 			};
 			name = Debug;
 		};
-		00347EF6FB9D4818984D369A /* Release */ = {
+		8D71AC025D3C45B896A3FA5B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -174,7 +174,7 @@
 			};
 			name = Release;
 		};
-		4AA21483310F4C5BBA3C2C4B /* Debug */ = {
+		B989732553BD439BB3DF57C9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -233,7 +233,7 @@
 				);
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = "ORCA_LINKED";
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
-					"$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib",
+					"$(SRCROOT)/../build-ios-iphoneos-arm64/engine_bundle/lib",
 					"$(inherited)",
 				);
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
@@ -244,7 +244,7 @@
 			};
 			name = Debug;
 		};
-		A5386C6B3DC642A496F07110 /* Release */ = {
+		502F8F3F2EA04E3ABAE89C0A /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -303,7 +303,7 @@
 				);
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = "ORCA_LINKED";
 				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
-					"$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib",
+					"$(SRCROOT)/../build-ios-iphoneos-arm64/engine_bundle/lib",
 					"$(inherited)",
 				);
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
@@ -317,25 +317,25 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		9F6E124D463642C3B35D7DA5 /* Build configuration list for PBXProject "OrcaSlicer" */ = {
+		553C2B1092E54FEC926E2505 /* Build configuration list for PBXProject "OrcaSlicer" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				0070B825D39C4E658789F62A /* Debug */,
-				00347EF6FB9D4818984D369A /* Release */,
+				49CB35E64A9E4C55B87F8855 /* Debug */,
+				8D71AC025D3C45B896A3FA5B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		EBE47105D7ED4EC3BB97CD15 /* Build configuration list for PBXNativeTarget "OrcaSlicer" */ = {
+		ACE8E24819B84A15BA5A2FF7 /* Build configuration list for PBXNativeTarget "OrcaSlicer" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				4AA21483310F4C5BBA3C2C4B /* Debug */,
-				A5386C6B3DC642A496F07110 /* Release */,
+				B989732553BD439BB3DF57C9 /* Debug */,
+				502F8F3F2EA04E3ABAE89C0A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = 3469ABB7E83549BD9CC61E3E /* Project object */;
+	rootObject = A85E16996F0E490AAF2779FE /* Project object */;
 }

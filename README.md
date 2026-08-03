@@ -54,7 +54,7 @@ Official libslic3r (C++ — every engine .cpp stays upstream code)
 | Bundled process profile JSON | Done (minimal `process_0.20mm_Standard`) |
 | Device tab: Moonraker connect + G-code upload | Done (basic HTTP API) |
 | SwiftUI Prepare / Preview / Device + Process sheet | In progress (not desktop GUI parity) |
-| Physical device (`iphoneos`) deps/engine | Not yet |
+| Physical device (`iphoneos`) deps + `liborca_engine.a` | Done (arm64) |
 | App Store release | **Not ready** — AGPL-3.0 + incomplete UI |
 
 More detail: [`FULL_PORT_REALITY.md`](FULL_PORT_REALITY.md) · plan notes: [`PORT_IOS.md`](PORT_IOS.md)
