@@ -148,15 +148,56 @@ ORCA_API int orca_session_rotate_object_z(
     orca_session_t *s, int index, float degrees);
 
 /**
+ * Rotate around axis: axis 0=X, 1=Y, 2=Z (degrees). index = -1 → all.
+ */
+ORCA_API int orca_session_rotate_object_axis(
+    orca_session_t *s, int index, int axis, float degrees);
+
+/**
+ * Mirror object on axis 0=X, 1=Y, 2=Z. index = -1 → all.
+ */
+ORCA_API int orca_session_mirror_object(
+    orca_session_t *s, int index, int axis);
+
+/**
  * Uniform scale object about its center. index = -1 → all.
  */
 ORCA_API int orca_session_scale_object(
     orca_session_t *s, int index, float factor);
 
 /**
- * Auto-arrange objects on bed (simple grid, not full nest2d).
+ * Uniform scale so object fits bed with margin_mm padding. index = -1 → all (each).
+ */
+ORCA_API int orca_session_scale_to_fit(
+    orca_session_t *s, int index, float margin_mm);
+
+/**
+ * Official auto-orient (libslic3r orient) for object; index = -1 → all.
+ */
+ORCA_API int orca_session_orient_object(orca_session_t *s, int index);
+
+/**
+ * Auto-arrange objects on bed (libnest2d arrange_objects).
  */
 ORCA_API int orca_session_arrange(orca_session_t *s);
+
+/**
+ * FFF extruder / multi-filament slots from selected printer.
+ * @return nozzle count (max(1, nozzle_diameter.size()))
+ */
+ORCA_API int orca_session_extruder_count(orca_session_t *s);
+
+/**
+ * Filament preset name assigned to extruder slot (0-based).
+ * Pointer valid until next API call; empty string if unset.
+ */
+ORCA_API const char *orca_session_filament_slot_name(orca_session_t *s, int slot);
+
+/**
+ * Assign system/user filament preset to extruder slot, then apply_presets.
+ */
+ORCA_API int orca_session_set_filament_slot(
+    orca_session_t *s, int slot, const char *filament_name);
 
 /**
  * Delete model object at index. Reindexes remaining objects.

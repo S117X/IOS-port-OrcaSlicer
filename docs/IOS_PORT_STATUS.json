@@ -1,17 +1,14 @@
 {
-  "status": "complete",
-  "updated": "2026-08-03T01:11:00Z",
+  "status": "porting_to_100",
+  "percent_estimate": 82,
+  "updated": "2026-08-03T12:45:00Z",
   "branch": "ios-port",
-  "last_focus": "G8 memory mitigations — port complete",
+  "last_focus": "G9 transforms + G10 multi-filament + G13 recent + G12 PrusaLink",
   "gates": {
-    "G1_engine_build": true,
-    "G2_profiles": true,
-    "G3_process_ui": true,
-    "G4_prepare_objects": true,
-    "G5_preview": true,
-    "G6_device": true,
-    "G7_project": true,
-    "G8_quality": true
+    "G1": true, "G2": true, "G3": true, "G4": true,
+    "G5": true, "G6": false, "G7": true, "G8": true,
+    "G9": true, "G10": true, "G11": false, "G12": false,
+    "G13": false, "G14": false, "G15": false, "G16": false
   },
-  "notes": "DONE. Full must-have checklist [x]. G8 memory: skip vendor reinstall, compatible name lists, lazy settings enums, G-code point/travel caps, memory-warning purge of preview/option caches, RSS report after profile load. Engine official libslic3r via orca_slice_c_api."
+  "notes": "G9+G10 done. G6/G12 still need mDNS+live temps. G13 partial (recent models). Remaining: G11 calib, G12 discovery/temps, G13 export/import/user filament, G14 cut/repair/grid, G15 analysis, G16 ship. Device BUILD SUCCEEDED after engine rebuild."
 }

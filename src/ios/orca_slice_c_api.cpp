@@ -31,6 +31,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/Arrange.hpp"
+#include "libslic3r/Orient.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -864,25 +865,58 @@ int orca_session_translate_object(
 
 int orca_session_rotate_object_z(orca_session_t *s, int index, float degrees)
 {
-    if (!s || !s->has_model)
+    return orca_session_rotate_object_axis(s, index, 2, degrees);
+}
+
+int orca_session_rotate_object_axis(
+    orca_session_t *s, int index, int axis, float degrees)
+{
+    if (!s || !s->has_model || axis < 0 || axis > 2)
         return -1;
     try {
         const double rad = double(degrees) * M_PI / 180.0;
+        const Axis ax = axis == 0 ? X : (axis == 1 ? Y : Z);
         for_each_object(s, index, [&](ModelObject *obj) {
             for (ModelInstance *inst : obj->instances) {
                 if (!inst) continue;
-                // rotate around Z (bed normal)
-                inst->set_rotation(Z, inst->get_rotation(Z) + rad);
+                inst->set_rotation(ax, inst->get_rotation(ax) + rad);
             }
             obj->invalidate_bounding_box();
             obj->ensure_on_bed();
         });
         return 0;
     } catch (const std::exception &ex) {
-        s->set_error(std::string("rotate: ") + ex.what());
+        s->set_error(std::string("rotate_axis: ") + ex.what());
         return -2;
     } catch (...) {
-        s->set_error("rotate: unknown error");
+        s->set_error("rotate_axis: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_mirror_object(orca_session_t *s, int index, int axis)
+{
+    if (!s || !s->has_model || axis < 0 || axis > 2)
+        return -1;
+    try {
+        const Axis ax = axis == 0 ? X : (axis == 1 ? Y : Z);
+        for_each_object(s, index, [&](ModelObject *obj) {
+            for (ModelInstance *inst : obj->instances) {
+                if (!inst) continue;
+                // Flip mirror sign on axis
+                Vec3d m = inst->get_mirror();
+                m[ax] = -m[ax];
+                inst->set_mirror(m);
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+        });
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("mirror: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("mirror: unknown error");
         return -2;
     }
 }
@@ -908,6 +942,144 @@ int orca_session_scale_object(orca_session_t *s, int index, float factor)
     } catch (...) {
         s->set_error("scale: unknown error");
         return -2;
+    }
+}
+
+int orca_session_scale_to_fit(orca_session_t *s, int index, float margin_mm)
+{
+    if (!s || !s->has_model)
+        return -1;
+    try {
+        ensure_default_config(s);
+        float bed_w = 220.f, bed_d = 220.f, bed_h = 250.f;
+        orca_session_bed_size(s, &bed_w, &bed_d, &bed_h);
+        const double margin = std::max(0.0, double(margin_mm));
+        const double usable_w = std::max(1.0, double(bed_w) - 2.0 * margin);
+        const double usable_d = std::max(1.0, double(bed_d) - 2.0 * margin);
+        const double usable_h = std::max(1.0, double(bed_h) - margin);
+
+        for_each_object(s, index, [&](ModelObject *obj) {
+            if (obj->instances.empty())
+                return;
+            BoundingBoxf3 bb = obj->instance_bounding_box(0);
+            const double sx = bb.size().x();
+            const double sy = bb.size().y();
+            const double sz = bb.size().z();
+            if (sx < 1e-6 || sy < 1e-6 || sz < 1e-6)
+                return;
+            double f = std::min({usable_w / sx, usable_d / sy, usable_h / sz, 1e6});
+            if (f >= 0.999 && f <= 1.001)
+                return; // already fits; still allow slight shrink only
+            if (f > 1.0)
+                f = 1.0; // only shrink to fit (do not auto-enlarge)
+            for (ModelInstance *inst : obj->instances) {
+                if (!inst) continue;
+                Vec3d sc = inst->get_scaling_factor();
+                inst->set_scaling_factor(sc * f);
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+        });
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("scale_to_fit: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("scale_to_fit: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_orient_object(orca_session_t *s, int index)
+{
+    if (!s || !s->has_model)
+        return -1;
+    try {
+        for_each_object(s, index, [&](ModelObject *obj) {
+            // Official auto-orient (Slic3r::orientation)
+            for (ModelInstance *inst : obj->instances) {
+                if (inst)
+                    orientation::orient(inst);
+            }
+            try {
+                orientation::orient(obj);
+            } catch (...) {
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+        });
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("orient: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("orient: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_extruder_count(orca_session_t *s)
+{
+    if (!s)
+        return 1;
+    try {
+        ensure_default_config(s);
+        if (const ConfigOptionFloats *nd = s->config.option<ConfigOptionFloats>("nozzle_diameter")) {
+            if (!nd->values.empty())
+                return int(nd->values.size());
+        }
+        if (s->preset_bundle) {
+            int n = s->preset_bundle->get_printer_extruder_count();
+            if (n > 0)
+                return n;
+        }
+        return 1;
+    } catch (...) {
+        return 1;
+    }
+}
+
+const char *orca_session_filament_slot_name(orca_session_t *s, int slot)
+{
+    static thread_local std::string empty;
+    empty.clear();
+    if (!s || !s->preset_bundle || slot < 0)
+        return empty.c_str();
+    try {
+        const auto &fps = s->preset_bundle->filament_presets;
+        if (size_t(slot) >= fps.size())
+            return empty.c_str();
+        // Cache into selected_filament_cache only for slot 0; use cover_path_cache as temp for others
+        // Prefer dedicated static storage per call via session string
+        s->selected_filament_cache = fps[size_t(slot)];
+        return s->selected_filament_cache.c_str();
+    } catch (...) {
+        return empty.c_str();
+    }
+}
+
+int orca_session_set_filament_slot(orca_session_t *s, int slot, const char *filament_name)
+{
+    if (!s || !s->preset_bundle || !filament_name || slot < 0)
+        return -1;
+    try {
+        // Grow filament_presets if needed
+        auto &fps = s->preset_bundle->filament_presets;
+        if (size_t(slot) >= fps.size())
+            fps.resize(size_t(slot) + 1, fps.empty() ? std::string() : fps.front());
+        if (!s->preset_bundle->filaments.select_preset_by_name(filament_name, true)) {
+            s->set_error(std::string("filament not found: ") + filament_name);
+            return -2;
+        }
+        s->preset_bundle->set_filament_preset(size_t(slot), filament_name);
+        if (slot == 0)
+            s->sync_selected_caches();
+        s->config = s->preset_bundle->full_config(true);
+        s->has_config = true;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("set_filament_slot: ") + ex.what());
+        return -3;
     }
 }
 

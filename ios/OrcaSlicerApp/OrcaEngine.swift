@@ -810,15 +810,37 @@ final class OrcaEngine: ObservableObject {
     }
 
     func rotateZ(degrees: Float, index: Int? = nil) {
+        rotate(axis: 2, degrees: degrees, index: index)
+    }
+
+    /// axis: 0=X, 1=Y, 2=Z
+    func rotate(axis: Int, degrees: Float, index: Int? = nil) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
         let idx = Int32(index ?? selectedObjectIndex)
-        let rc = orca_session_rotate_object_z(s, idx, degrees)
+        let rc = orca_session_rotate_object_axis(s, idx, Int32(axis), degrees)
         if rc == 0 {
             refreshMesh(); refreshBounds(); refreshModelInfo()
-            lastMessage = String(format: "Rotated Z %.0f°", degrees)
+            let ax = ["X", "Y", "Z"][max(0, min(2, axis))]
+            lastMessage = String(format: "Rotated %@ %.0f°", ax, degrees)
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "rotate failed"
+        }
+        #endif
+    }
+
+    /// axis: 0=X, 1=Y, 2=Z
+    func mirror(axis: Int, index: Int? = nil) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let idx = Int32(index ?? selectedObjectIndex)
+        let rc = orca_session_mirror_object(s, idx, Int32(axis))
+        if rc == 0 {
+            refreshMesh(); refreshBounds(); refreshModelInfo()
+            let ax = ["X", "Y", "Z"][max(0, min(2, axis))]
+            lastMessage = "Mirrored \(ax)"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "mirror failed"
         }
         #endif
     }
@@ -833,6 +855,34 @@ final class OrcaEngine: ObservableObject {
             lastMessage = String(format: "Scaled ×%.2f", factor)
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "scale failed"
+        }
+        #endif
+    }
+
+    func scaleToFit(marginMm: Float = 5, index: Int? = nil) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let idx = Int32(index ?? selectedObjectIndex)
+        let rc = orca_session_scale_to_fit(s, idx, marginMm)
+        if rc == 0 {
+            refreshMesh(); refreshBounds(); refreshModelInfo()
+            lastMessage = "Scaled to fit bed"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "scale_to_fit failed"
+        }
+        #endif
+    }
+
+    func autoOrient(index: Int? = nil) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let idx = Int32(index ?? selectedObjectIndex)
+        let rc = orca_session_orient_object(s, idx)
+        if rc == 0 {
+            refreshMesh(); refreshBounds(); refreshModelInfo()
+            lastMessage = "Auto-oriented"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "orient failed"
         }
         #endif
     }
@@ -857,6 +907,53 @@ final class OrcaEngine: ObservableObject {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "arrange failed"
         }
         #endif
+    }
+
+    var extruderCount: Int {
+        #if ORCA_LINKED
+        guard let s = session else { return 1 }
+        return max(1, Int(orca_session_extruder_count(s)))
+        #else
+        return 1
+        #endif
+    }
+
+    func filamentSlotName(_ slot: Int) -> String {
+        #if ORCA_LINKED
+        guard let s = session, let c = orca_session_filament_slot_name(s, Int32(slot)) else { return "" }
+        return String(cString: c)
+        #else
+        return ""
+        #endif
+    }
+
+    @discardableResult
+    func setFilamentSlot(_ slot: Int, name: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else { return false }
+        let rc = name.withCString { orca_session_set_filament_slot(s, Int32(slot), $0) }
+        if rc == 0 {
+            if slot == 0 { selectedFilament = name }
+            lastMessage = "Slot \(slot + 1): \(name)"
+            return true
+        }
+        lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "set filament slot failed"
+        return false
+        #else
+        return false
+        #endif
+    }
+
+    // MARK: Recent files
+    private static let recentKey = "orca.recent.models"
+    @Published var recentModelPaths: [String] = UserDefaults.standard.stringArray(forKey: OrcaEngine.recentKey) ?? []
+
+    func rememberRecent(url: URL) {
+        var list = recentModelPaths.filter { $0 != url.path }
+        list.insert(url.path, at: 0)
+        if list.count > 12 { list = Array(list.prefix(12)) }
+        recentModelPaths = list
+        UserDefaults.standard.set(list, forKey: Self.recentKey)
     }
 
     func duplicateObject(at index: Int) {

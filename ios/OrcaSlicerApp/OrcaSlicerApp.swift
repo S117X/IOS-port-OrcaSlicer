@@ -221,6 +221,7 @@ struct OrcaRootView: View {
     enum PrinterHostType: String, CaseIterable, Identifiable {
         case moonraker = "Moonraker"
         case octoprint = "OctoPrint"
+        case prusalink = "PrusaLink"
         var id: String { rawValue }
     }
 
@@ -271,11 +272,17 @@ struct OrcaRootView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(hostType == .moonraker ? "Moonraker / Klipper host" : "OctoPrint host")
+                    Text(
+                        hostType == .moonraker ? "Moonraker / Klipper host"
+                            : hostType == .prusalink ? "PrusaLink host"
+                            : "OctoPrint host"
+                    )
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(OrcaTheme.muted)
                     TextField(
-                        hostType == .moonraker ? "http://printer.local" : "http://octopi.local",
+                        hostType == .moonraker ? "http://printer.local"
+                            : hostType == .prusalink ? "http://prusa.local"
+                            : "http://octopi.local",
                         text: $printerHost
                     )
                         .textInputAutocapitalization(.never)
@@ -286,8 +293,11 @@ struct OrcaRootView: View {
                         .padding(12)
                         .background(OrcaTheme.elevated)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    if hostType == .octoprint {
-                        SecureField("API key (OctoPrint)", text: $octoApiKey)
+                    if hostType == .octoprint || hostType == .prusalink {
+                        SecureField(
+                            hostType == .prusalink ? "API key (PrusaLink)" : "API key (OctoPrint)",
+                            text: $octoApiKey
+                        )
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .font(.system(size: 14, design: .monospaced))
@@ -464,35 +474,35 @@ struct OrcaRootView: View {
     private func connectPrinterHost() async {
         switch hostType {
         case .moonraker: await connectMoonraker()
-        case .octoprint: await connectOctoPrint()
+        case .octoprint, .prusalink: await connectOctoPrint() // PrusaLink speaks OctoPrint-compatible API
         }
     }
 
     private func uploadGCodeToHost() async {
         switch hostType {
         case .moonraker: await uploadGCodeToMoonraker()
-        case .octoprint: await uploadGCodeToOctoPrint()
+        case .octoprint, .prusalink: await uploadGCodeToOctoPrint()
         }
     }
 
     private func startHostPrint() async {
         switch hostType {
         case .moonraker: await startMoonrakerPrint()
-        case .octoprint: await startOctoPrint()
+        case .octoprint, .prusalink: await startOctoPrint()
         }
     }
 
     private func cancelHostPrint() async {
         switch hostType {
         case .moonraker: await cancelMoonrakerPrint()
-        case .octoprint: await cancelOctoPrint()
+        case .octoprint, .prusalink: await cancelOctoPrint()
         }
     }
 
     private func refreshHostJobStatus() async {
         switch hostType {
         case .moonraker: await refreshMoonrakerJobStatus()
-        case .octoprint: await refreshOctoPrintJobStatus()
+        case .octoprint, .prusalink: await refreshOctoPrintJobStatus()
         }
     }
 
@@ -1207,8 +1217,22 @@ struct OrcaRootView: View {
                 }
                 toolChip("Center", "scope") { engine.centerOnBed(); status = engine.lastMessage }
                 toolChip("Arrange", "square.grid.2x2") { engine.arrange(); status = engine.lastMessage }
-                toolChip("↺ 45°", "rotate.left") { engine.rotateZ(degrees: -45); status = engine.lastMessage }
-                toolChip("↻ 45°", "rotate.right") { engine.rotateZ(degrees: 45); status = engine.lastMessage }
+                toolChip("Orient", "arrow.up.and.down.and.arrow.left.and.right") {
+                    engine.autoOrient(); status = engine.lastMessage
+                }
+                toolChip("Fit bed", "arrow.down.right.and.arrow.up.left") {
+                    engine.scaleToFit(); status = engine.lastMessage
+                }
+                toolChip("↺ Z", "rotate.left") { engine.rotateZ(degrees: -45); status = engine.lastMessage }
+                toolChip("↻ Z", "rotate.right") { engine.rotateZ(degrees: 45); status = engine.lastMessage }
+                toolChip("↺ X", "rotate.3d") { engine.rotate(axis: 0, degrees: -45); status = engine.lastMessage }
+                toolChip("↻ Y", "rotate.3d") { engine.rotate(axis: 1, degrees: 45); status = engine.lastMessage }
+                toolChip("Mirror X", "arrow.left.and.right.righttriangle.left.righttriangle.right") {
+                    engine.mirror(axis: 0); status = engine.lastMessage
+                }
+                toolChip("Mirror Y", "arrow.up.and.down.righttriangle.up.righttriangle.down") {
+                    engine.mirror(axis: 1); status = engine.lastMessage
+                }
                 toolChip("×0.5", "minus.magnifyingglass") { engine.scale(factor: 0.5); status = engine.lastMessage }
                 toolChip("×2", "plus.magnifyingglass") { engine.scale(factor: 2); status = engine.lastMessage }
                 toolChip("←", "arrow.left") { engine.translate(dx: -10, dy: 0); status = engine.lastMessage }
@@ -1325,6 +1349,7 @@ struct OrcaRootView: View {
     @State private var showPrinterPicker = false
     @State private var showProcessPicker = false
     @State private var showFilamentPicker = false
+    @State private var filamentSlotForPicker = 0
     @State private var showAllSettings = false
     @State private var userProcessName = ""
 
@@ -1413,6 +1438,7 @@ struct OrcaRootView: View {
                     .listRowBackground(OrcaTheme.panel)
 
                     Button {
+                        filamentSlotForPicker = 0
                         showFilamentPicker = true
                     } label: {
                         HStack {
@@ -1430,8 +1456,52 @@ struct OrcaRootView: View {
                         }
                     }
                     .listRowBackground(OrcaTheme.panel)
+
+                    // Multi-extruder filament slots (when printer has >1 nozzle)
+                    if engine.extruderCount > 1 {
+                        ForEach(0..<engine.extruderCount, id: \.self) { slot in
+                            Button {
+                                filamentSlotForPicker = slot
+                                showFilamentPicker = true
+                            } label: {
+                                HStack {
+                                    Text("Extruder \(slot + 1)")
+                                        .foregroundStyle(OrcaTheme.muted)
+                                    Spacer()
+                                    Text(slotFilamentLabel(slot))
+                                    .foregroundStyle(OrcaTheme.text)
+                                    .lineLimit(1)
+                                    Image(systemName: "chevron.right")
+                                        .foregroundStyle(OrcaTheme.muted)
+                                }
+                            }
+                            .listRowBackground(OrcaTheme.panel)
+                        }
+                    }
                 } header: {
                     Text("System profiles")
+                }
+
+                if !engine.recentModelPaths.isEmpty {
+                    Section("Recent models") {
+                        ForEach(engine.recentModelPaths.prefix(8), id: \.self) { path in
+                            Button {
+                                let url = URL(fileURLWithPath: path)
+                                guard FileManager.default.fileExists(atPath: path) else {
+                                    status = "Missing: \(URL(fileURLWithPath: path).lastPathComponent)"
+                                    return
+                                }
+                                status = engine.loadModel(url: url)
+                                syncProcessFieldsFromEngine()
+                                showProcess = false
+                            } label: {
+                                Text(URL(fileURLWithPath: path).lastPathComponent)
+                                    .foregroundStyle(OrcaTheme.accent)
+                                    .lineLimit(1)
+                            }
+                            .listRowBackground(OrcaTheme.panel)
+                        }
+                    }
                 }
 
                 Section {
@@ -1803,14 +1873,22 @@ struct OrcaRootView: View {
             }
             .sheet(isPresented: $showFilamentPicker) {
                 presetPickerSheet(
-                    title: "Filament",
+                    title: filamentSlotForPicker == 0
+                        ? "Filament"
+                        : "Filament · extruder \(filamentSlotForPicker + 1)",
                     search: $filamentSearch,
                     items: engine.filteredFilaments(search: filamentSearch),
-                    selected: engine.selectedFilament,
+                    selected: filamentSlotForPicker == 0
+                        ? engine.selectedFilament
+                        : engine.filamentSlotName(filamentSlotForPicker),
                     vendorChips: [],
                     vendorFilter: .constant("")
                 ) { name in
-                    _ = engine.selectFilament(name)
+                    if filamentSlotForPicker == 0 {
+                        _ = engine.selectFilament(name)
+                    } else {
+                        _ = engine.setFilamentSlot(filamentSlotForPicker, name: name)
+                    }
                     syncProcessFieldsFromEngine()
                     status = engine.lastMessage
                     showFilamentPicker = false
@@ -1907,6 +1985,11 @@ struct OrcaRootView: View {
             .preferredColorScheme(.dark)
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func slotFilamentLabel(_ slot: Int) -> String {
+        let n = engine.filamentSlotName(slot)
+        return n.isEmpty ? "—" : n
     }
 
     private func vendorChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -2089,6 +2172,7 @@ struct OrcaRootView: View {
             } else {
                 status = engine.loadModel(url: url)
             }
+            engine.rememberRecent(url: url)
             // 3MF / profile-bearing loads refresh process sheet fields (config applied in engine)
             syncProcessFieldsFromEngine()
             mainTab = .prepare

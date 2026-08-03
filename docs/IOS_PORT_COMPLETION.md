@@ -1,19 +1,19 @@
-# iOS OrcaSlicer port — completion criteria
+# iOS OrcaSlicer port — **100% completion criteria**
 
-This file is the **source of truth** for whether the port is “done.”  
-The durable watcher / scheduler agent must re-evaluate these gates and keep building until **all** must-have gates pass.
+Source of truth for whether the **full** mobile port is done.  
+Durable watcher must keep building until every gate below is `[x]`.
 
-Last updated: 2026-08-03 — ALL must-have gates complete
+Last updated: 2026-08-03 — expanded from v1 daily-driver to **full port (100%)**
 
 ## Philosophy
 
-- **Engine:** official `libslic3r` via `orca_ios_api` (not a Swift rewrite).
-- **Shell:** SwiftUI host with real workflows (not demo UI).
-- **Done** means a **daily-driver mobile slicer**, not 1:1 wxWidgets clone.
+- **Engine:** official `libslic3r` via `orca_ios_api` only (never a Swift slicer rewrite).
+- **Shell:** SwiftUI product workflows matching desktop capability where mobile UX allows.
+- **100% DONE** = all gates G1–G16 checked. (wxWidgets 1:1 UI is still not required.)
 
 ---
 
-## Must-have gates (ALL required for DONE)
+## Phase A — Daily driver (G1–G8) — v1
 
 ### G1 — Engine & build
 - [x] `ORCA_LINKED` device + simulator engines link and slice
@@ -21,74 +21,114 @@ Last updated: 2026-08-03 — ALL must-have gates complete
 - [x] App installs and runs on physical iPhone
 
 ### G2 — Profiles
-- [x] Full `resources/profiles` bundled (vendors, machines, process, filament)
+- [x] Full `resources/profiles` bundled
 - [x] Printer / process / filament pickers with search
-- [x] Bed size from selected machine
-- [x] Cover / bed texture on plate
-- [x] Compatible-only process/filament filtering after printer select
-- [x] User-saved presets persist across launches
+- [x] Bed size + cover / bed texture
+- [x] Compatible-only process/filament filter
+- [x] User-saved process presets persist
 
 ### G3 — Process settings UI
-- [x] Enum options use **dropdowns** (brim_type, support_type, wall_generator, seam_position, ironing_type, infill pattern)
-- [x] Correct keys (`ironing_type` not bool `ironing`)
-- [x] Scalar fields sync from engine after preset apply
-- [x] Multi-value temps/diameters take first value in UI; set accepts scalar
-- [x] Searchable full settings browser for remaining keys
+- [x] Enum dropdowns (brim, support, wall, seam, ironing, infill)
+- [x] Correct option keys + sync after apply
+- [x] Searchable full settings browser
 
 ### G4 — Prepare / objects
-- [x] Load / add model, basic transforms, clear plate
-- [x] Object list select / delete / duplicate in UI
-- [x] Free drag on plate (or better gesture transforms)
-- [x] Full **libnest2d** arrange (official `arrange_objects`)
-- [x] Multi-plate support
+- [x] Load/add/clear, object list, delete/duplicate
+- [x] Free drag on plate
+- [x] libnest2d arrange
+- [x] Multi-plate slots
 
 ### G5 — Preview
-- [x] Basic G-code path preview + layer Z scrubber
-- [x] Feature-type toggles (wall/infill/support/travel)
-- [x] Better fidelity (width or engine path data)
+- [x] G-code paths + layer scrubber
+- [x] Feature-type toggles
+- [x] WIDTH ribbon fidelity
 
 ### G6 — Device / send
-- [x] Moonraker connect + G-code upload
-- [x] Start print + job status / cancel
-- [x] OctoPrint or second host type
+- [x] Moonraker connect/upload/start/cancel/status
+- [x] OctoPrint same
+- [x] PrusaLink host type (OctoPrint-compatible API path)
+- [ ] mDNS / Bonjour printer discovery
 
 ### G7 — Project
-- [x] Save 3MF
-- [x] Open 3MF restores model + config
-- [x] Share G-code via system share sheet
+- [x] Save / open 3MF with config
+- [x] Share G-code
 
 ### G8 — Product quality
-- [x] No crash on first-run full profile install
-- [x] Memory acceptable with full profile tree
-- [x] Status/errors clear when options fail to apply
-- [x] GitHub `ios-port` builds documented and current
+- [x] First-run profiles resilient
+- [x] Memory mitigations
+- [x] Clear option errors
+- [x] Build docs
 
 ---
 
-## DONE rule (watcher)
+## Phase B — Full port to 100% (G9–G16)
 
-```
-DONE = all Must-have unchecked boxes are gone (every [ ] above is [x])
-```
+### G9 — Full transforms
+- [x] Rotate X / Y / Z (not only Z)
+- [x] Mirror X / Y / Z
+- [x] Scale to fit bed
+- [x] Official auto-orient (`orientation::orient`)
+- [x] UI chips for all of the above
 
-When DONE:
-1. Write `docs/IOS_PORT_STATUS.json` with `"status": "complete"`.
-2. Stop scheduling further port work (watcher self-exits).
-3. Commit + push final status.
+### G10 — Multi-filament / extruders
+- [x] Extruder count from printer
+- [x] Per-slot filament assignment UI
+- [x] set_filament_preset for slot N + apply
 
-While not DONE:
-1. Pick highest incomplete gate (G3 → G4 → G5 → G6 → G7 → G8 → remaining G2).
-2. Implement, rebuild if needed, install when device available.
-3. Update this checklist (flip `[ ]` → `[x]` only when verified).
-4. Update `docs/IOS_PORT_STATUS.json` progress fields.
-5. Commit + push meaningful chunks.
+### G11 — Calibration
+- [ ] Temp tower (official calib path or guided slice)
+- [ ] Flow rate calibration
+- [ ] Pressure advance / retraction helper
+- [ ] Accessible from Process or Device sheet
+
+### G12 — Device completeness
+- [x] Moonraker + OctoPrint
+- [x] PrusaLink
+- [ ] Bonjour discovery list
+- [ ] Live nozzle/bed temps from printer (when host supports)
+
+### G13 — Files & presets
+- [x] Recent models list
+- [ ] Export current config JSON
+- [ ] Import user filament/process from Files
+- [ ] Save user filament preset (not only process)
+
+### G14 — Mesh / object ops
+- [ ] Simple plane cut (split object)
+- [ ] Repair / manifold hint (or report non-manifold)
+- [ ] Clone grid (NxM duplicates + arrange)
+
+### G15 — Preview / analysis
+- [ ] Layer time estimate display
+- [ ] Filament usage by feature (if GCodeProcessor exposes)
+- [ ] Color by speed or height option
+
+### G16 — Ship readiness
+- [ ] App icons / splash complete
+- [ ] Privacy strings for LAN + local network
+- [ ] Crash-free cold start with full profiles on device
+- [ ] `docs/IOS_PORT_STATUS.json` → `"status": "complete_100"`
+- [ ] Tag / release notes on `ios-port`
 
 ---
 
-## Explicitly out of scope for v1 DONE
+## DONE rule (100%)
 
-- Full AMS / multi-material painting
-- Support / seam painting tools
+```
+DONE_100 = every [ ] in G1–G16 is [x]
+status file = "complete_100"
+```
+
+When DONE_100:
+1. Update `docs/IOS_PORT_STATUS.json` with `"status": "complete_100"`.
+2. Stop durable scheduler.
+3. Commit + push; optional tag `ios-port-100`.
+
+While not done: implement next incomplete gate in order **G9 → G10 → G11 → G12 → G13 → G14 → G15 → G16**, rebuild engines when C API changes, device build with team `6PU4X4CG8B`.
+
+## Still never required for 100%
+
+- Full AMS paint / seam paint GL tools (desktop OpenGL)
 - Bambu cloud lock-in
-- 1:1 every desktop calibration wizard
 - wxWidgets UI port
+- Perfect byte-parity with every desktop dialog
