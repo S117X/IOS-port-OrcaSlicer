@@ -322,16 +322,21 @@ struct ProcessSettingsBrowser: View {
                 .tint(themeAccent)
 
             case .enum:
-                if !entry.enumChoices.isEmpty {
+                // Lazy enum lists: filled on first display via engine.enumChoices
+                let choices: [ProcessEnumChoice] = {
+                    if !entry.enumChoices.isEmpty { return entry.enumChoices }
+                    return engine.enumChoices(for: entry.key)
+                }()
+                if !choices.isEmpty {
                     let current = draftValues[entry.key] ?? entry.value
                     let matched = ProcessOptionCatalog.match(
-                        current, in: entry.enumChoices, fallback: entry.enumChoices[0].key
+                        current, in: choices, fallback: choices[0].key
                     )
                     Picker(entry.key, selection: Binding(
                         get: { matched },
                         set: { apply(entry.key, value: $0) }
                     )) {
-                        ForEach(entry.enumChoices) { c in
+                        ForEach(choices) { c in
                             Text(c.label).tag(c.key)
                         }
                     }

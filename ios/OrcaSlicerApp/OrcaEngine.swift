@@ -3,6 +3,7 @@
 import Foundation
 import Combine
 import SceneKit
+import Darwin
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -115,8 +116,46 @@ final class OrcaEngine: ObservableObject {
             // Kick off full system profile install+load in background
             Task { await loadAllSystemPresets() }
         }
+        // Free heavy preview caches under OS memory pressure (full profile tree is large).
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleMemoryWarning()
+        }
         #else
         lastMessage = "Build with ORCA_LINKED + liborca_engine.a"
+        #endif
+    }
+
+    /// Drop G-code preview + settings-browser caches. Model mesh kept for prepare.
+    func handleMemoryWarning() {
+        #if ORCA_LINKED
+        gcodePathNode = nil
+        gcodeGeometry = nil
+        gcodeURL = nil
+        if let s = session {
+            orca_session_purge_option_caches(s)
+        }
+        lastMessage = "Freed preview/settings caches (memory pressure)"
+        #endif
+    }
+
+    /// Approximate app footprint (MB) for status after profile load.
+    func reportMemoryMB() -> Double {
+        #if canImport(UIKit)
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return 0 }
+        return Double(info.resident_size) / (1024.0 * 1024.0)
+        #else
+        return 0
         #endif
     }
 
@@ -188,10 +227,12 @@ final class OrcaEngine: ObservableObject {
            !sf.isEmpty, filamentNames.contains(sf) {
             _ = selectFilament(sf)
         }
+        let mem = reportMemoryMB()
         lastMessage = String(
-            format: "Loaded %d printers · %d process · %d filament (compatible filter %@)",
+            format: "Loaded %d printers · %d process · %d filament (compat %@) · ~%.0f MB",
             printerNames.count, processNames.count, filamentNames.count,
-            compatibleOnly ? "on" : "off"
+            compatibleOnly ? "on" : "off",
+            mem
         )
         #endif
     }
@@ -925,7 +966,8 @@ final class OrcaEngine: ObservableObject {
 
     // MARK: - Full settings browser (print_config_def + session values)
 
-    /// Snapshot of every DynamicPrintConfig key for the searchable browser.
+    /// Snapshot of DynamicPrintConfig keys for the searchable browser.
+    /// Enum choice lists are loaded lazily via `enumChoices(for:)` to save RAM.
     func allConfigOptions() -> [ConfigOptionEntry] {
         #if ORCA_LINKED
         guard let s = session else { return [] }
@@ -952,19 +994,7 @@ final class OrcaEngine: ObservableObject {
             let category = String(cString: catBuf)
             let sidetext = String(cString: sideBuf)
             let value = getOption(key) ?? ""
-            var enums: [ProcessEnumChoice] = []
-            if type == 5 {
-                let ec = Int(key.withCString { orca_session_option_enum_count(s, $0) })
-                for j in 0..<ec {
-                    let vk = key.withCString { orca_session_option_enum_value(s, $0, Int32(j)) }
-                        .map { String(cString: $0) } ?? ""
-                    let lb = key.withCString { orca_session_option_enum_label(s, $0, Int32(j)) }
-                        .map { String(cString: $0) } ?? vk
-                    if !vk.isEmpty {
-                        enums.append(ProcessEnumChoice(key: vk, label: lb.isEmpty ? vk : lb))
-                    }
-                }
-            }
+            // Defer enum choice materialization — hundreds of keys × N labels was costly
             out.append(ConfigOptionEntry(
                 key: key,
                 label: label.isEmpty ? key : label,
@@ -972,10 +1002,33 @@ final class OrcaEngine: ObservableObject {
                 sidetext: sidetext,
                 type: ConfigOptionEntry.Kind(rawValue: Int(type)) ?? .other,
                 value: value,
-                enumChoices: enums
+                enumChoices: []
             ))
         }
         return out
+        #else
+        return []
+        #endif
+    }
+
+    /// Load enum serialize keys for one option (call when user expands an enum row).
+    func enumChoices(for key: String) -> [ProcessEnumChoice] {
+        #if ORCA_LINKED
+        guard let s = session else { return [] }
+        let ec = Int(key.withCString { orca_session_option_enum_count(s, $0) })
+        guard ec > 0 else { return [] }
+        var enums: [ProcessEnumChoice] = []
+        enums.reserveCapacity(ec)
+        for j in 0..<ec {
+            let vk = key.withCString { orca_session_option_enum_value(s, $0, Int32(j)) }
+                .map { String(cString: $0) } ?? ""
+            let lb = key.withCString { orca_session_option_enum_label(s, $0, Int32(j)) }
+                .map { String(cString: $0) } ?? vk
+            if !vk.isEmpty {
+                enums.append(ProcessEnumChoice(key: vk, label: lb.isEmpty ? vk : lb))
+            }
+        }
+        return enums
         #else
         return []
         #endif
@@ -1078,7 +1131,8 @@ final class OrcaEngine: ObservableObject {
             } else if let nd = self.getOptionFirst("nozzle_diameter").flatMap(Float.init), nd > 0.05 {
                 defW = nd * 1.1
             }
-            if let path = GCodePathGeometry.parse(url: out, defaultWidth: defW) {
+            // Cap path points for mobile RAM (ribbons are heavier than lines)
+            if let path = GCodePathGeometry.parse(url: out, maxPoints: 60_000, defaultWidth: defW) {
                 self.gcodeGeometry = path
                 self.gcodeZMin = path.zMin
                 self.gcodeZMax = max(path.zMax, path.zMin + 0.2)

@@ -627,19 +627,23 @@ struct GCodePathGeometry {
                 zMax = max(zMax, nz)
                 total += 1
             } else {
-                // Non-extrusion move: record as Travel so preview can toggle it
-                let moved = abs(nx - x) > 0.01 || abs(ny - y) > 0.01 || abs(nz - z) > 0.01
-                if moved {
+                // Non-extrusion: record travel only if long enough (skip micro-jogs for RAM)
+                let dx = nx - x, dy = ny - y, dz = nz - z
+                let dist = sqrtf(dx * dx + dy * dy + dz * dz)
+                if dist > 1.5 {
                     flush()
-                    segs.append(Segment(
-                        points: [SCNVector3(x, y, z), SCNVector3(nx, ny, nz)],
-                        feature: "Travel",
-                        width: 0
-                    ))
-                    zMin = min(zMin, nz, z)
-                    zMax = max(zMax, nz, z)
-                    total += 1
-                } else if abs(nz - z) > 0.01 {
+                    // Subsample travel budget: at most ~1/4 of maxPoints
+                    if total < maxPoints / 4 {
+                        segs.append(Segment(
+                            points: [SCNVector3(x, y, z), SCNVector3(nx, ny, nz)],
+                            feature: "Travel",
+                            width: 0
+                        ))
+                        zMin = min(zMin, nz, z)
+                        zMax = max(zMax, nz, z)
+                        total += 1
+                    }
+                } else if abs(dz) > 0.01 {
                     flush()
                 }
             }

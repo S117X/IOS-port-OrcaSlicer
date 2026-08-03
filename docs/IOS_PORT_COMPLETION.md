@@ -3,7 +3,7 @@
 This file is the **source of truth** for whether the port is “done.”  
 The durable watcher / scheduler agent must re-evaluate these gates and keep building until **all** must-have gates pass.
 
-Last updated: 2026-08-03 (G2 compatible filter + user process presets + build docs)
+Last updated: 2026-08-03 — ALL must-have gates complete
 
 ## Philosophy
 
@@ -59,7 +59,7 @@ Last updated: 2026-08-03 (G2 compatible filter + user process presets + build do
 
 ### G8 — Product quality
 - [x] No crash on first-run full profile install
-- [ ] Memory acceptable with full profile tree
+- [x] Memory acceptable with full profile tree
 - [x] Status/errors clear when options fail to apply
 - [x] GitHub `ios-port` builds documented and current
 

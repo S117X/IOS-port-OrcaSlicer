@@ -1290,9 +1290,25 @@ int orca_session_load_all_presets(orca_session_t *s)
             if (b == "OrcaFilamentLibrary") return false;
             return a < b;
         });
+        // Install vendors only if not already present under data_dir/system
+        // (avoids re-copy of ~80MB profile tree every launch — peak disk + RAM).
         int installed = 0;
+        int skipped = 0;
+        fs::path system_root = fs::path(s->data_dir_path) / "system";
         for (const std::string &v : vendors) {
             try {
+                fs::path vendor_dir = system_root / v;
+                bool already = false;
+                if (fs::exists(vendor_dir) && fs::is_directory(vendor_dir)) {
+                    // Treat as installed if vendor index or any child exists
+                    already = fs::exists(vendor_dir / (v + ".json"))
+                        || !fs::is_empty(vendor_dir);
+                }
+                if (already) {
+                    ++skipped;
+                    ++installed; // count as available for load_presets
+                    continue;
+                }
                 if (install_vendor_bundles_from_resources({v}))
                     ++installed;
             } catch (...) {
@@ -1303,6 +1319,7 @@ int orca_session_load_all_presets(orca_session_t *s)
             s->set_error("install_vendor_bundles_from_resources failed for all vendors");
             return -5;
         }
+        (void) skipped;
 
         // Public path: load_presets → private load_system_presets_from_json
         AppConfig app_config;
@@ -1668,6 +1685,30 @@ const char *orca_session_selected_filament(orca_session_t *s)
 int orca_session_presets_loaded(orca_session_t *s)
 {
     return (s && s->presets_loaded) ? 1 : 0;
+}
+
+int orca_session_preset_stats(
+    orca_session_t *s, int *printers, int *process, int *filament)
+{
+    if (!s)
+        return -1;
+    if (printers) *printers = int(s->printer_names.size());
+    if (process) *process = int(s->process_names.size());
+    if (filament) *filament = int(s->filament_names.size());
+    return 0;
+}
+
+void orca_session_purge_option_caches(orca_session_t *s)
+{
+    if (!s)
+        return;
+    s->option_keys_cache.clear();
+    s->option_keys_cache.shrink_to_fit();
+    s->enum_values_cache.clear();
+    s->enum_values_cache.shrink_to_fit();
+    s->enum_labels_cache.clear();
+    s->enum_labels_cache.shrink_to_fit();
+    s->enum_lookup_key.clear();
 }
 
 const char *orca_session_last_error(orca_session_t *s)

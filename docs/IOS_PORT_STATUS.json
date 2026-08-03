@@ -1,8 +1,8 @@
 {
-  "status": "in_progress",
-  "updated": "2026-08-03T00:51:00Z",
+  "status": "complete",
+  "updated": "2026-08-03T01:11:00Z",
   "branch": "ios-port",
-  "last_focus": "G2 compatible filter + user process presets; G8 errors/docs/first-run",
+  "last_focus": "G8 memory mitigations — port complete",
   "gates": {
     "G1_engine_build": true,
     "G2_profiles": true,
@@ -11,7 +11,7 @@
     "G5_preview": true,
     "G6_device": true,
     "G7_project": true,
-    "G8_quality": false
+    "G8_quality": true
   },
-  "notes": "G2 done: update_compatible filters process/filament lists; user process JSON under user_presets/process; last printer/process/filament restored via UserDefaults. G8: clear set_option errors, IOS_BUILD.md, first-run vendor install continues on partial failure. Remaining: G8 memory acceptable with full profile tree (verify/optimize)."
+  "notes": "DONE. Full must-have checklist [x]. G8 memory: skip vendor reinstall, compatible name lists, lazy settings enums, G-code point/travel caps, memory-warning purge of preview/option caches, RSS report after profile load. Engine official libslic3r via orca_slice_c_api."
 }

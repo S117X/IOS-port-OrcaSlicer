@@ -305,6 +305,20 @@ ORCA_API const char *orca_session_selected_filament(orca_session_t *s);
 /** Whether system presets finished loading. */
 ORCA_API int orca_session_presets_loaded(orca_session_t *s);
 
+/**
+ * Lightweight catalog stats for memory / UI budgeting.
+ * printers / process / filament counts after last name-cache refresh.
+ * @return 0 on success
+ */
+ORCA_API int orca_session_preset_stats(
+    orca_session_t *s, int *printers, int *process, int *filament);
+
+/**
+ * Drop settings-browser caches (option key / enum lists). Safe anytime.
+ * Call under memory pressure; next option_count rebuilds.
+ */
+ORCA_API void orca_session_purge_option_caches(orca_session_t *s);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);
