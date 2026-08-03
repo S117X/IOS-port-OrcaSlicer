@@ -24,7 +24,8 @@
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Format/3mf.hpp"
-#include "libslic3r/libslic3r_version.h"
+// Generated into build dir as libslic3r_version.h (include path via libslic3r target)
+#include "libslic3r_version.h"
 
 #include <cstdlib>
 #include <cstring>
