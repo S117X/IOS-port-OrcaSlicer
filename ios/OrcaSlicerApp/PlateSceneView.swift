@@ -389,9 +389,9 @@ struct MeshGeometry {
             }
         }
         for i in 0..<vcount {
-            var nx: Float = normals[i * 3]
-            var ny: Float = normals[i * 3 + 1]
-            var nz: Float = normals[i * 3 + 2]
+            let nx: Float = normals[i * 3]
+            let ny: Float = normals[i * 3 + 1]
+            let nz: Float = normals[i * 3 + 2]
             let lenSq: Float = nx * nx + ny * ny + nz * nz
             let len: Float = lenSq > 0.0000001 ? sqrtf(lenSq) : 0.0001
             normals[i * 3] = nx / len

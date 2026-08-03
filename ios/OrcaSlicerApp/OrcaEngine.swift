@@ -587,20 +587,25 @@ final class OrcaEngine: ObservableObject {
             orca_session_set_progress_callback(s, nil, nil)
             Unmanaged<ProgressBox>.fromOpaque(boxPtr).release()
         }
+        // OpaquePointer is not Sendable; pass as bitPattern across Task.detached (Swift 6).
+        let sessionBits = UInt(bitPattern: s)
+        let outPath = out.path
         let rc = await Task.detached {
-            out.path.withCString { orca_session_slice_to_gcode(s, $0) }
+            let sess = OpaquePointer(bitPattern: sessionBits)!
+            return outPath.withCString { orca_session_slice_to_gcode(sess, $0) }
         }.value
         if rc != 0 {
             let err = orca_session_last_error(s).map { String(cString: $0) } ?? "slice failed"
             return "slice rc=\(rc): \(err)"
         }
-        await MainActor.run {
+        await MainActor.run { [sessionBits] in
+            let sess = OpaquePointer(bitPattern: sessionBits)!
             self.gcodeURL = out
             self.slicePercent = 100
             self.slicePhase = "Done"
             var t: Float = 0, fil: Float = 0
             var layers: Int32 = 0
-            if orca_session_last_slice_stats(s, &t, &fil, &layers) == 0 {
+            if orca_session_last_slice_stats(sess, &t, &fil, &layers) == 0 {
                 self.lastSliceTimeSec = t
                 self.lastSliceFilamentMm3 = fil
                 self.lastSliceLayers = Int(layers)
