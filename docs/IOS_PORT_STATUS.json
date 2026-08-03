@@ -1,17 +1,17 @@
 {
   "status": "in_progress",
-  "updated": "2026-08-02T23:55:00Z",
+  "updated": "2026-08-03T00:10:00Z",
   "branch": "ios-port",
-  "last_focus": "G3 full settings browser + G6 Moonraker start/status + G7 open 3MF/share",
+  "last_focus": "G4 free drag + multi-plate slots; G5 feature-type toggles",
   "gates": {
     "G1_engine_build": true,
     "G2_profiles": false,
     "G3_process_ui": true,
-    "G4_prepare_objects": false,
+    "G4_prepare_objects": true,
     "G5_preview": false,
     "G6_device": false,
     "G7_project": true,
     "G8_quality": false
   },
-  "notes": "G3 done: searchable All settings browser over DynamicPrintConfig (option_count/info/enum APIs). G6 start/cancel/status+poll via Moonraker; still need OctoPrint. G7 open 3MF preserves transforms + applies embedded config; ShareLink for gcode. Next: G4 free drag / multi-plate, then G5 preview features, G2 filter/user presets, G8 quality."
+  "notes": "G4 done: Drag mode bed-plane pan → translate_object; multi-plate via 3MF slots. G5 feature toggles (wall/infill/support/travel/other) + travel moves in parse. Remaining: G5 better path fidelity, G6 OctoPrint, G2 compatible filter + user presets, G8 quality."
 }

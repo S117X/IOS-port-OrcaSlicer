@@ -49,6 +49,8 @@ struct OrcaRootView: View {
     @State private var status = ""
     @State private var isSlicing = false
     @State private var mainTab: MainTab = .prepare
+    /// Prepare: pan on plate moves selection (disables camera orbit while on)
+    @State private var moveMode = false
 
     enum MainTab: String, CaseIterable {
         case prepare = "Prepare"
@@ -72,11 +74,31 @@ struct OrcaRootView: View {
                             showGCode: mainTab == .preview && engine.gcodePathNode != nil,
                             bedSize: engine.bedSize,
                             bedTexturePath: engine.bedTexturePath,
-                            accent: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
+                            accent: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1),
+                            moveMode: moveMode && mainTab == .prepare && engine.hasModel,
+                            onDragCommit: { dx, dy in
+                                engine.translate(dx: dx, dy: dy)
+                                status = engine.lastMessage
+                            },
+                            onDragLive: { dx, dy in
+                                status = String(format: "Drag Δ%.1f, %.1f mm", dx, dy)
+                            }
                         )
                         .overlay(alignment: .topLeading) {
                             hintOverlay
                                 .padding(12)
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            if moveMode && mainTab == .prepare && engine.hasModel {
+                                Text("Drag on plate · orbit off")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(OrcaTheme.accent)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(OrcaTheme.panel.opacity(0.95))
+                                    .clipShape(Capsule())
+                                    .padding(12)
+                            }
                         }
                         .overlay {
                             if mainTab == .device {
@@ -148,6 +170,7 @@ struct OrcaRootView: View {
             ForEach(MainTab.allCases, id: \.self) { tab in
                 Button {
                     mainTab = tab
+                    if tab != .prepare { moveMode = false }
                     if tab == .preview && engine.gcodeURL == nil {
                         status = "Slice to preview toolpaths."
                     }
@@ -653,6 +676,9 @@ struct OrcaRootView: View {
                 }
             }
 
+            if mainTab == .prepare {
+                plateTabsRow
+            }
             if engine.hasModel && mainTab == .prepare {
                 objectPickerRow
                 plateToolsRow
@@ -818,9 +844,80 @@ struct OrcaRootView: View {
         .buttonStyle(.plain)
     }
 
+    private var plateTabsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(0..<engine.plateCount, id: \.self) { i in
+                    Button {
+                        engine.selectPlate(i)
+                        status = engine.lastMessage
+                        moveMode = false
+                    } label: {
+                        Text("Plate \(i + 1)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                engine.currentPlateIndex == i
+                                    ? OrcaTheme.accent.opacity(0.25)
+                                    : OrcaTheme.elevated
+                            )
+                            .foregroundStyle(
+                                engine.currentPlateIndex == i ? OrcaTheme.accent : OrcaTheme.text
+                            )
+                            .clipShape(Capsule())
+                            .overlay(
+                                Capsule().stroke(
+                                    engine.currentPlateIndex == i ? OrcaTheme.accent : Color.clear,
+                                    lineWidth: 1
+                                )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                Button {
+                    engine.addPlate()
+                    status = engine.lastMessage
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .bold))
+                        .padding(8)
+                        .background(OrcaTheme.elevated)
+                        .foregroundStyle(OrcaTheme.accent)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                if engine.plateCount > 1 {
+                    Button {
+                        engine.removeCurrentPlate()
+                        status = engine.lastMessage
+                    } label: {
+                        Image(systemName: "minus")
+                            .font(.system(size: 12, weight: .bold))
+                            .padding(8)
+                            .background(OrcaTheme.elevated)
+                            .foregroundStyle(OrcaTheme.danger)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
     private var plateToolsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
+                toolChip(
+                    "Drag",
+                    "hand.draw",
+                    selected: moveMode
+                ) {
+                    moveMode.toggle()
+                    status = moveMode
+                        ? "Move mode: drag on plate (orbit off)"
+                        : "Orbit camera"
+                }
                 toolChip("Center", "scope") { engine.centerOnBed(); status = engine.lastMessage }
                 toolChip("Arrange", "square.grid.2x2") { engine.arrange(); status = engine.lastMessage }
                 toolChip("↺ 45°", "rotate.left") { engine.rotateZ(degrees: -45); status = engine.lastMessage }
@@ -835,7 +932,12 @@ struct OrcaRootView: View {
         }
     }
 
-    private func toolChip(_ title: String, _ systemImage: String, action: @escaping () -> Void) -> some View {
+    private func toolChip(
+        _ title: String,
+        _ systemImage: String,
+        selected: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: systemImage)
@@ -845,9 +947,12 @@ struct OrcaRootView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(OrcaTheme.elevated)
-            .foregroundStyle(OrcaTheme.text)
+            .background(selected ? OrcaTheme.accent.opacity(0.25) : OrcaTheme.elevated)
+            .foregroundStyle(selected ? OrcaTheme.accent : OrcaTheme.text)
             .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(selected ? OrcaTheme.accent : Color.clear, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -874,6 +979,17 @@ struct OrcaRootView: View {
                 in: Double(engine.gcodeZMin)...Double(max(engine.gcodeZMax, engine.gcodeZMin + 0.05))
             )
             .tint(OrcaTheme.accent)
+
+            // Feature-type toggles (G5) — filter ;TYPE: groups + travel moves
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    featureToggle("Wall", isOn: $engine.previewShowWall)
+                    featureToggle("Infill", isOn: $engine.previewShowInfill)
+                    featureToggle("Support", isOn: $engine.previewShowSupport)
+                    featureToggle("Travel", isOn: $engine.previewShowTravel)
+                    featureToggle("Other", isOn: $engine.previewShowOther)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -881,6 +997,25 @@ struct OrcaRootView: View {
         .overlay(alignment: .top) {
             Rectangle().fill(OrcaTheme.border).frame(height: 1)
         }
+    }
+
+    private func featureToggle(_ title: String, isOn: Binding<Bool>) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+            engine.applyPreviewLayer()
+        } label: {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(isOn.wrappedValue ? OrcaTheme.accent.opacity(0.28) : OrcaTheme.elevated)
+                .foregroundStyle(isOn.wrappedValue ? OrcaTheme.accent : OrcaTheme.muted)
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule().stroke(isOn.wrappedValue ? OrcaTheme.accent : Color.clear, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     @State private var topShells = "3"

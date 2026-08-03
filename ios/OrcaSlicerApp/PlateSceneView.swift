@@ -18,6 +18,12 @@ struct PlateSceneView: UIViewRepresentable {
     /// Optional machine bed texture / cover PNG path (from system profiles)
     var bedTexturePath: String? = nil
     var accent: UIColor = UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
+    /// Prepare tab: pan on bed plane moves selected object(s) in mm (slic3r XY).
+    var moveMode: Bool = false
+    /// Called with total Δx, Δy mm when a drag ends (official translate_object).
+    var onDragCommit: ((Float, Float) -> Void)? = nil
+    /// Live visual feedback during drag (optional status text).
+    var onDragLive: ((Float, Float) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -34,15 +40,25 @@ struct PlateSceneView: UIViewRepresentable {
             view.pointOfView = cam
         }
         context.coordinator.view = view
+        context.coordinator.parent = self
         context.coordinator.lastBed = bedSize
         context.coordinator.lastTexture = bedTexturePath ?? ""
+        context.coordinator.installGestures(on: view)
         return view
     }
 
     func updateUIView(_ view: SCNView, context: Context) {
+        context.coordinator.parent = self
         guard let scene = view.scene,
               let content = scene.rootNode.childNode(withName: "content", recursively: false)
         else { return }
+
+        // Move mode: disable orbit so pan owns the gesture
+        let wantCamera = !moveMode && !context.coordinator.isDragging
+        if view.allowsCameraControl != wantCamera {
+            view.allowsCameraControl = wantCamera
+        }
+        context.coordinator.panGesture?.isEnabled = moveMode
 
         // Bed size / texture recreate if missing or changed
         let texKey = bedTexturePath ?? ""
@@ -65,9 +81,9 @@ struct PlateSceneView: UIViewRepresentable {
             }
         }
 
-        // Mesh model
-        let meshKey = mesh.map { "\($0.vertexCount)-\($0.indices.count)-\($0.min.x)-\($0.max.x)" } ?? "nil"
-        if context.coordinator.lastMeshKey != meshKey {
+        // Mesh model — skip rebuild while dragging (node is offset live)
+        let meshKey = mesh.map { "\($0.vertexCount)-\($0.indices.count)-\($0.min.x)-\($0.max.x)-\($0.min.y)-\($0.max.y)" } ?? "nil"
+        if !context.coordinator.isDragging, context.coordinator.lastMeshKey != meshKey {
             content.childNode(withName: "model", recursively: false)?.removeFromParentNode()
             if let mesh {
                 let node = mesh.makeNode(color: accent)
@@ -78,6 +94,7 @@ struct PlateSceneView: UIViewRepresentable {
                 context.coordinator.frameCameraOnBed(view: view, bedSize: bedSize)
             }
             context.coordinator.lastMeshKey = meshKey
+            context.coordinator.visualOffset = .zero
         }
 
         // G-code toolpaths (Preview tab) — also under content (Z-up)
@@ -290,11 +307,96 @@ struct PlateSceneView: UIViewRepresentable {
         return parent
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject {
         weak var view: SCNView?
+        var parent: PlateSceneView?
         var lastMeshKey: String = ""
         var lastBed: SIMD2<Float> = SIMD2(0, 0)
         var lastTexture: String = ""
+        var panGesture: UIPanGestureRecognizer?
+        var isDragging = false
+        /// Accumulated visual offset in slic3r XY mm applied to model node while dragging
+        var visualOffset: SIMD2<Float> = .zero
+        private var dragStartBedXY: SIMD2<Float>?
+        private var lastBedXY: SIMD2<Float>?
+
+        func installGestures(on view: SCNView) {
+            guard panGesture == nil else { return }
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+            pan.maximumNumberOfTouches = 1
+            pan.isEnabled = false
+            view.addGestureRecognizer(pan)
+            panGesture = pan
+        }
+
+        @objc private func handlePan(_ gr: UIPanGestureRecognizer) {
+            guard let view = view, let parent = parent, parent.moveMode else { return }
+            let pt = gr.location(in: view)
+
+            switch gr.state {
+            case .began:
+                guard let bedXY = projectToBedXY(view: view, screen: pt) else { return }
+                isDragging = true
+                view.allowsCameraControl = false
+                dragStartBedXY = bedXY
+                lastBedXY = bedXY
+                visualOffset = .zero
+
+            case .changed:
+                guard let start = dragStartBedXY,
+                      let bedXY = projectToBedXY(view: view, screen: pt)
+                else { return }
+                let total = SIMD2(bedXY.x - start.x, bedXY.y - start.y)
+                visualOffset = total
+                applyVisualOffset(total)
+                lastBedXY = bedXY
+                parent.onDragLive?(total.x, total.y)
+
+            case .ended, .cancelled, .failed:
+                let total = visualOffset
+                isDragging = false
+                dragStartBedXY = nil
+                lastBedXY = nil
+                // Reset visual offset; engine commit will rebuild mesh at new position
+                applyVisualOffset(.zero)
+                visualOffset = .zero
+                if abs(total.x) > 0.05 || abs(total.y) > 0.05 {
+                    parent.onDragCommit?(total.x, total.y)
+                }
+                view.allowsCameraControl = !(parent.moveMode)
+
+            default:
+                break
+            }
+        }
+
+        /// Ray → world Y=0 (bed) → slic3r XY under content R_x(-90).
+        private func projectToBedXY(view: SCNView, screen: CGPoint) -> SIMD2<Float>? {
+            // Unproject near/far along the view ray
+            let near = view.unprojectPoint(SCNVector3(Float(screen.x), Float(screen.y), 0))
+            let far = view.unprojectPoint(SCNVector3(Float(screen.x), Float(screen.y), 1))
+            let dx = far.x - near.x
+            let dy = far.y - near.y
+            let dz = far.z - near.z
+            // Intersect ray with world Y = 0 (content bed after R_x(-90))
+            if abs(dy) < 1e-6 { return nil }
+            let t = -near.y / dy
+            if t < 0 || t > 1.5 { return nil } // slightly allow beyond far
+            let wx = near.x + dx * t
+            let wz = near.z + dz * t
+            // World (x, 0, z) ← content (x, y, 0) with content R_x(-90): (x,z,-y) ⇒ y = -z
+            let slic3rX = wx
+            let slic3rY = -wz
+            return SIMD2(slic3rX, slic3rY)
+        }
+
+        private func applyVisualOffset(_ offset: SIMD2<Float>) {
+            guard let content = view?.scene?.rootNode.childNode(withName: "content", recursively: false),
+                  let model = content.childNode(withName: "model", recursively: false)
+            else { return }
+            // Model is in content/Z-up space; offset is slic3r XY
+            model.position = SCNVector3(offset.x, offset.y, 0)
+        }
 
         /// World-space target of bed center after content R_x(-90): (cx, 0, -cy)
         private func bedCenterWorld(bedSize: SIMD2<Float>) -> SCNVector3 {
@@ -495,13 +597,30 @@ struct GCodePathGeometry {
                 }
             }
             if hasE {
+                // Extrusion → keep current ;TYPE: feature
                 if cur.isEmpty { cur.append(SCNVector3(x, y, z)) }
                 cur.append(SCNVector3(nx, ny, nz))
                 zMin = min(zMin, nz)
                 zMax = max(zMax, nz)
                 total += 1
-            } else if abs(nz - z) > 0.01 {
-                flush()
+            } else {
+                // Non-extrusion move: record as Travel so preview can toggle it
+                let moved = abs(nx - x) > 0.01 || abs(ny - y) > 0.01 || abs(nz - z) > 0.01
+                if moved {
+                    flush()
+                    let prevFeature = feature
+                    feature = "Travel"
+                    segs.append(Segment(
+                        points: [SCNVector3(x, y, z), SCNVector3(nx, ny, nz)],
+                        feature: "Travel"
+                    ))
+                    feature = prevFeature
+                    zMin = min(zMin, nz, z)
+                    zMax = max(zMax, nz, z)
+                    total += 1
+                } else if abs(nz - z) > 0.01 {
+                    flush()
+                }
             }
             x = nx; y = ny; z = nz
         }
@@ -511,9 +630,54 @@ struct GCodePathGeometry {
         return GCodePathGeometry(segments: segs, zMin: zMin, zMax: zMax)
     }
 
-    func filtered(maxZ: Float) -> GCodePathGeometry {
+    /// Feature group used by preview toggles (wall / infill / support / travel / other).
+    enum FeatureGroup: String, CaseIterable, Identifiable {
+        case wall
+        case infill
+        case support
+        case travel
+        case other
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .wall: return "Wall"
+            case .infill: return "Infill"
+            case .support: return "Support"
+            case .travel: return "Travel"
+            case .other: return "Other"
+            }
+        }
+    }
+
+    static func group(for feature: String) -> FeatureGroup {
+        let f = feature.lowercased()
+        if f.contains("travel") || f.contains("move") || f.contains("wipe") {
+            return .travel
+        }
+        if f.contains("support") {
+            return .support
+        }
+        if f.contains("wall") || f.contains("perimeter") || f.contains("external") {
+            return .wall
+        }
+        if f.contains("infill") || f.contains("sparse") || f.contains("internal")
+            || f.contains("solid") || f.contains("top") || f.contains("bottom")
+            || f.contains("bridge") || f.contains("skin") {
+            return .infill
+        }
+        if f.contains("skirt") || f.contains("brim") || f.contains("ironing") {
+            return .other
+        }
+        return .other
+    }
+
+    func filtered(maxZ: Float, enabledGroups: Set<FeatureGroup>? = nil) -> GCodePathGeometry {
         var out: [Segment] = []
         for seg in segments {
+            if let enabled = enabledGroups {
+                let g = Self.group(for: seg.feature)
+                if !enabled.contains(g) { continue }
+            }
             let pts = seg.points.filter { $0.z <= maxZ + 0.001 }
             if pts.count > 1 {
                 out.append(Segment(points: pts, feature: seg.feature))
@@ -547,6 +711,9 @@ struct GCodePathGeometry {
         }
         if f.contains("bridge") {
             return UIColor(red: 0.20, green: 0.75, blue: 0.85, alpha: 1)
+        }
+        if f.contains("travel") {
+            return UIColor(red: 0.45, green: 0.45, blue: 0.50, alpha: 0.55)
         }
         return UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
     }

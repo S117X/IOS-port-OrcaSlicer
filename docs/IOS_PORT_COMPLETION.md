@@ -3,7 +3,7 @@
 This file is the **source of truth** for whether the port is “done.”  
 The durable watcher / scheduler agent must re-evaluate these gates and keep building until **all** must-have gates pass.
 
-Last updated: 2026-08-02 (settings browser + Moonraker start/status + 3MF open)
+Last updated: 2026-08-03 (free drag + multi-plate slots + preview feature toggles)
 
 ## Philosophy
 
@@ -38,13 +38,13 @@ Last updated: 2026-08-02 (settings browser + Moonraker start/status + 3MF open)
 ### G4 — Prepare / objects
 - [x] Load / add model, basic transforms, clear plate
 - [x] Object list select / delete / duplicate in UI
-- [ ] Free drag on plate (or better gesture transforms)
+- [x] Free drag on plate (or better gesture transforms)
 - [x] Full **libnest2d** arrange (official `arrange_objects`)
-- [ ] Multi-plate support
+- [x] Multi-plate support
 
 ### G5 — Preview
 - [x] Basic G-code path preview + layer Z scrubber
-- [ ] Feature-type toggles (wall/infill/support/travel)
+- [x] Feature-type toggles (wall/infill/support/travel)
 - [ ] Better fidelity (width or engine path data)
 
 ### G6 — Device / send

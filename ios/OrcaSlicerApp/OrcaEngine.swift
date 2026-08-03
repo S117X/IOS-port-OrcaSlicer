@@ -34,6 +34,12 @@ final class OrcaEngine: ObservableObject {
     @Published var previewMaxZ: Float = 100
     @Published var gcodeZMin: Float = 0
     @Published var gcodeZMax: Float = 20
+    /// Preview feature toggles (wall / infill / support / travel / other)
+    @Published var previewShowWall = true
+    @Published var previewShowInfill = true
+    @Published var previewShowSupport = true
+    @Published var previewShowTravel = false
+    @Published var previewShowOther = true
 
     // MARK: System presets (all vendors / printers / process / filament)
     @Published var presetsLoaded = false
@@ -49,6 +55,12 @@ final class OrcaEngine: ObservableObject {
     /// File path to machine cover / bed texture for plate logo
     @Published var bedTexturePath: String?
     @Published var printerCoverPath: String?
+
+    // MARK: Multi-plate (slot-based; each plate stores model+config as 3MF)
+    @Published var plateCount: Int = 1
+    @Published var currentPlateIndex: Int = 0
+    /// Per-plate snapshot paths under Documents/OrcaSlicer/plates/
+    private var platePaths: [URL] = []
 
     /// Fallback bundled process JSONs if system presets fail to load
     static let bundledProcessProfiles: [(id: String, title: String)] = [
@@ -535,13 +547,19 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    /// Rebuild G-code SceneKit node from geometry filtered by previewMaxZ
+    /// Rebuild G-code SceneKit node from geometry filtered by previewMaxZ + feature toggles
     func applyPreviewLayer() {
         guard let geo = gcodeGeometry else {
             gcodePathNode = nil
             return
         }
-        let filtered = geo.filtered(maxZ: previewMaxZ)
+        var groups = Set<GCodePathGeometry.FeatureGroup>()
+        if previewShowWall { groups.insert(.wall) }
+        if previewShowInfill { groups.insert(.infill) }
+        if previewShowSupport { groups.insert(.support) }
+        if previewShowTravel { groups.insert(.travel) }
+        if previewShowOther { groups.insert(.other) }
+        let filtered = geo.filtered(maxZ: previewMaxZ, enabledGroups: groups)
         #if canImport(UIKit)
         gcodePathNode = filtered.makeNode(
             color: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
@@ -991,6 +1009,103 @@ final class OrcaEngine: ObservableObject {
         #else
         lastMessage = "Not linked"
         return nil
+        #endif
+    }
+
+    // MARK: Multi-plate slots
+
+    private var platesDir: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let dir = docs.appendingPathComponent("OrcaSlicer/plates", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func ensurePlateSlots() {
+        while platePaths.count < plateCount {
+            let i = platePaths.count
+            platePaths.append(platesDir.appendingPathComponent("plate_\(i).3mf"))
+        }
+        if platePaths.count > plateCount {
+            platePaths = Array(platePaths.prefix(plateCount))
+        }
+    }
+
+    /// Persist current plate to its slot file (no-op if empty).
+    @discardableResult
+    func saveCurrentPlateSlot() -> Bool {
+        #if ORCA_LINKED
+        ensurePlateSlots()
+        guard currentPlateIndex >= 0, currentPlateIndex < platePaths.count else { return false }
+        let dest = platePaths[currentPlateIndex]
+        if !hasModel {
+            // Empty plate: remove prior snapshot if any
+            try? FileManager.default.removeItem(at: dest)
+            return true
+        }
+        guard let s = session else { return false }
+        let rc = dest.path.withCString { orca_session_save_3mf(s, $0) }
+        return rc == 0
+        #else
+        return false
+        #endif
+    }
+
+    /// Switch to plate index (saves current first). Loads slot 3MF or clears if empty.
+    func selectPlate(_ index: Int) {
+        #if ORCA_LINKED
+        guard index >= 0, index < plateCount else { return }
+        if index == currentPlateIndex { return }
+        _ = saveCurrentPlateSlot()
+        currentPlateIndex = index
+        ensurePlateSlots()
+        let path = platePaths[index]
+        if FileManager.default.fileExists(atPath: path.path) {
+            _ = loadModel(url: path, append: false)
+            lastMessage = "Plate \(index + 1) loaded"
+        } else {
+            clearPlate()
+            lastMessage = "Plate \(index + 1) empty"
+        }
+        #endif
+    }
+
+    /// Add a new empty plate and switch to it.
+    func addPlate() {
+        #if ORCA_LINKED
+        _ = saveCurrentPlateSlot()
+        plateCount += 1
+        ensurePlateSlots()
+        currentPlateIndex = plateCount - 1
+        clearPlate()
+        lastMessage = "Added plate \(plateCount)"
+        #endif
+    }
+
+    /// Remove current plate if more than one remain.
+    func removeCurrentPlate() {
+        #if ORCA_LINKED
+        guard plateCount > 1 else {
+            lastMessage = "Need at least one plate"
+            return
+        }
+        ensurePlateSlots()
+        let removeIdx = currentPlateIndex
+        try? FileManager.default.removeItem(at: platePaths[removeIdx])
+        platePaths.remove(at: removeIdx)
+        plateCount -= 1
+        if currentPlateIndex >= plateCount {
+            currentPlateIndex = plateCount - 1
+        }
+        ensurePlateSlots()
+        let path = platePaths[currentPlateIndex]
+        if FileManager.default.fileExists(atPath: path.path) {
+            _ = loadModel(url: path, append: false)
+        } else {
+            clearPlate()
+        }
+        lastMessage = "Removed plate · now \(plateCount) plate(s)"
         #endif
     }
 }
