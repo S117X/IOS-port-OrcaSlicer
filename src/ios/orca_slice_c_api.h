@@ -204,6 +204,65 @@ ORCA_API int orca_session_last_slice_stats(
     float *filament_mm3,
     int *layers);
 
+/**
+ * Writable data dir for installed system presets (Documents/OrcaSlicer).
+ * Call after create, before load_all_presets.
+ */
+ORCA_API int orca_session_set_data_dir(orca_session_t *s, const char *data_path);
+
+/**
+ * Install + load ALL system profiles from resources/profiles via official PresetBundle.
+ * May take several seconds on first run (copies to data_dir/system).
+ * @return 0 on success (partial vendor failures still return 0 if any loaded)
+ */
+ORCA_API int orca_session_load_all_presets(orca_session_t *s);
+
+/** Number of system printer (machine) presets after load_all_presets. */
+ORCA_API int orca_session_printer_count(orca_session_t *s);
+ORCA_API const char *orca_session_printer_name(orca_session_t *s, int index);
+
+ORCA_API int orca_session_process_count(orca_session_t *s);
+ORCA_API const char *orca_session_process_name(orca_session_t *s, int index);
+
+ORCA_API int orca_session_filament_count(orca_session_t *s);
+ORCA_API const char *orca_session_filament_name(orca_session_t *s, int index);
+
+/** Select machine / process / filament by exact preset name, then merge into session config. */
+ORCA_API int orca_session_select_printer(orca_session_t *s, const char *name);
+ORCA_API int orca_session_select_process(orca_session_t *s, const char *name);
+ORCA_API int orca_session_select_filament(orca_session_t *s, const char *name);
+
+/**
+ * Apply currently selected presets → session DynamicPrintConfig (full_config).
+ * Updates bed size from printable_area.
+ */
+ORCA_API int orca_session_apply_presets(orca_session_t *s);
+
+/**
+ * Path to machine cover PNG / bed texture under resources/profiles (may be empty).
+ * Tries official bed_texture, then Vendor/Model_cover.png.
+ */
+ORCA_API int orca_session_printer_cover_path(
+    orca_session_t *s, char *buf, size_t buf_len);
+
+/**
+ * Official bed texture path (grid/logo PNG from vendor model).
+ * Prefer this for plate surface; cover is for picker thumbnails.
+ */
+ORCA_API int orca_session_printer_bed_texture_path(
+    orca_session_t *s, char *buf, size_t buf_len);
+
+/** Vendor id string for printer at index (empty if unknown). */
+ORCA_API const char *orca_session_printer_vendor(orca_session_t *s, int index);
+
+/** Currently selected preset names (empty string if none). */
+ORCA_API const char *orca_session_selected_printer(orca_session_t *s);
+ORCA_API const char *orca_session_selected_process(orca_session_t *s);
+ORCA_API const char *orca_session_selected_filament(orca_session_t *s);
+
+/** Whether system presets finished loading. */
+ORCA_API int orca_session_presets_loaded(orca_session_t *s);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);

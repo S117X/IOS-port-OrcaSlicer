@@ -71,6 +71,7 @@ struct OrcaRootView: View {
                             gcodeNode: engine.gcodePathNode,
                             showGCode: mainTab == .preview && engine.gcodePathNode != nil,
                             bedSize: engine.bedSize,
+                            bedTexturePath: engine.bedTexturePath,
                             accent: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
                         )
                         .overlay(alignment: .topLeading) {
@@ -180,6 +181,11 @@ struct OrcaRootView: View {
                     }
                     Text(String(format: "%.0f × %.0f × %.0f mm", engine.bedSize.x, engine.bedSize.y, engine.bedHeight))
                         .font(.system(size: 11, design: .monospaced))
+                    if !engine.selectedPrinter.isEmpty {
+                        Text(engine.selectedPrinter)
+                            .font(.system(size: 10, design: .monospaced))
+                            .lineLimit(1)
+                    }
                 }
                 .foregroundStyle(OrcaTheme.muted)
                 .padding(10)
@@ -646,38 +652,134 @@ struct OrcaRootView: View {
     @State private var brimType = "no_brim"
     @State private var outerWallSpeed = "60"
     @State private var sparseSpeed = "100"
+    @State private var printerSearch = ""
+    @State private var processSearch = ""
+    @State private var filamentSearch = ""
+    @State private var vendorFilter = ""
+    @State private var showPrinterPicker = false
+    @State private var showProcessPicker = false
+    @State private var showFilamentPicker = false
 
     private var processSheet: some View {
         NavigationStack {
             List {
-                Section("Process profile") {
-                    ForEach(OrcaEngine.bundledProcessProfiles, id: \.id) { profile in
+                Section {
+                    if engine.presetsLoading {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Installing system profiles…")
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+                    } else if engine.presetsLoaded {
+                        labeled("Catalog", "\(engine.printerNames.count) printers · \(engine.processNames.count) process · \(engine.filamentNames.count) filament")
+                    } else {
                         Button {
-                            if engine.loadProcessProfile(profile.id) {
-                                syncProcessFieldsFromEngine()
-                                status = engine.lastMessage
-                            } else {
-                                status = engine.lastMessage
-                            }
+                            Task { await engine.loadAllSystemPresets() }
                         } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(profile.title)
-                                        .foregroundStyle(OrcaTheme.text)
-                                    Text(profile.id + ".json")
-                                        .font(.system(size: 11, design: .monospaced))
-                                        .foregroundStyle(OrcaTheme.muted)
-                                }
-                                Spacer()
-                                if engine.activeProcessProfile == profile.id {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(OrcaTheme.accent)
-                                }
-                            }
+                            Text("Load all system profiles")
+                                .foregroundStyle(OrcaTheme.accent)
                         }
                         .listRowBackground(OrcaTheme.panel)
                     }
+                    Button {
+                        showPrinterPicker = true
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Printer")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(OrcaTheme.muted)
+                                Text(engine.selectedPrinter.isEmpty ? "Select printer…" : engine.selectedPrinter)
+                                    .foregroundStyle(OrcaTheme.text)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            if let path = engine.printerCoverPath, let ui = UIImage(contentsOfFile: path) {
+                                Image(uiImage: ui)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 44, height: 44)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+
+                    Button {
+                        showProcessPicker = true
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Process")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(OrcaTheme.muted)
+                                Text(engine.selectedProcess.isEmpty ? engine.activeProcessProfile : engine.selectedProcess)
+                                    .foregroundStyle(OrcaTheme.text)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+
+                    Button {
+                        showFilamentPicker = true
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Filament")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(OrcaTheme.muted)
+                                Text(engine.selectedFilament.isEmpty ? "Select filament…" : engine.selectedFilament)
+                                    .foregroundStyle(OrcaTheme.text)
+                                    .lineLimit(2)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                } header: {
+                    Text("System profiles")
                 }
+
+                if !engine.presetsLoaded {
+                    Section("Bundled process (fallback)") {
+                        ForEach(OrcaEngine.bundledProcessProfiles, id: \.id) { profile in
+                            Button {
+                                if engine.loadProcessProfile(profile.id) {
+                                    syncProcessFieldsFromEngine()
+                                    status = engine.lastMessage
+                                } else {
+                                    status = engine.lastMessage
+                                }
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(profile.title)
+                                            .foregroundStyle(OrcaTheme.text)
+                                        Text(profile.id + ".json")
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundStyle(OrcaTheme.muted)
+                                    }
+                                    Spacer()
+                                    if engine.activeProcessProfile == profile.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(OrcaTheme.accent)
+                                    }
+                                }
+                            }
+                            .listRowBackground(OrcaTheme.panel)
+                        }
+                    }
+                }
+
                 Section("Objects on plate") {
                     if engine.hasModel {
                         labeled("File", engine.modelName ?? "—")
@@ -706,8 +808,8 @@ struct OrcaRootView: View {
                         )
                     )
                     labeled("Nozzle", engine.getOption("nozzle_diameter").map { "\($0) mm" } ?? "0.4 mm")
-                    labeled("Filament", engine.getOption("filament_diameter").map { "\($0) mm" } ?? "1.75 mm")
-                    labeled("Active profile", engine.activeProcessProfile)
+                    labeled("Filament Ø", engine.getOption("filament_diameter").map { "\($0) mm" } ?? "1.75 mm")
+                    labeled("Active process", engine.activeProcessProfile)
                     HStack(spacing: 8) {
                         bedPreset("220²", 220, 220)
                         bedPreset("256²", 256, 256)
@@ -853,7 +955,154 @@ struct OrcaRootView: View {
                 engine.refreshBedSize()
                 syncProcessFieldsFromEngine()
             }
+            .sheet(isPresented: $showPrinterPicker) {
+                presetPickerSheet(
+                    title: "Printer",
+                    search: $printerSearch,
+                    items: engine.filteredPrinters(
+                        vendor: vendorFilter.isEmpty ? nil : vendorFilter,
+                        search: printerSearch
+                    ),
+                    selected: engine.selectedPrinter,
+                    vendorChips: engine.vendorList,
+                    vendorFilter: $vendorFilter
+                ) { name in
+                    if engine.selectPrinter(name) {
+                        syncProcessFieldsFromEngine()
+                        status = engine.lastMessage
+                    }
+                    showPrinterPicker = false
+                }
+            }
+            .sheet(isPresented: $showProcessPicker) {
+                presetPickerSheet(
+                    title: "Process",
+                    search: $processSearch,
+                    items: engine.filteredProcesses(search: processSearch),
+                    selected: engine.selectedProcess.isEmpty ? engine.activeProcessProfile : engine.selectedProcess,
+                    vendorChips: [],
+                    vendorFilter: .constant("")
+                ) { name in
+                    if engine.presetsLoaded {
+                        _ = engine.selectProcess(name)
+                    } else {
+                        _ = engine.loadProcessProfile(name)
+                    }
+                    syncProcessFieldsFromEngine()
+                    status = engine.lastMessage
+                    showProcessPicker = false
+                }
+            }
+            .sheet(isPresented: $showFilamentPicker) {
+                presetPickerSheet(
+                    title: "Filament",
+                    search: $filamentSearch,
+                    items: engine.filteredFilaments(search: filamentSearch),
+                    selected: engine.selectedFilament,
+                    vendorChips: [],
+                    vendorFilter: .constant("")
+                ) { name in
+                    _ = engine.selectFilament(name)
+                    syncProcessFieldsFromEngine()
+                    status = engine.lastMessage
+                    showFilamentPicker = false
+                }
+            }
         }
+    }
+
+    /// Searchable list of system presets (printer / process / filament).
+    private func presetPickerSheet(
+        title: String,
+        search: Binding<String>,
+        items: [String],
+        selected: String,
+        vendorChips: [String],
+        vendorFilter: Binding<String>,
+        onPick: @escaping (String) -> Void
+    ) -> some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                if !vendorChips.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            vendorChip("All", selected: vendorFilter.wrappedValue.isEmpty) {
+                                vendorFilter.wrappedValue = ""
+                            }
+                            ForEach(vendorChips, id: \.self) { v in
+                                vendorChip(v, selected: vendorFilter.wrappedValue == v) {
+                                    vendorFilter.wrappedValue = v
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                    }
+                    .background(OrcaTheme.panel)
+                }
+                List {
+                    if items.isEmpty {
+                        Text(engine.presetsLoaded ? "No matches" : "Profiles not loaded")
+                            .foregroundStyle(OrcaTheme.muted)
+                            .listRowBackground(OrcaTheme.panel)
+                    } else {
+                        ForEach(items.prefix(800), id: \.self) { name in
+                            Button {
+                                onPick(name)
+                            } label: {
+                                HStack {
+                                    Text(name)
+                                        .foregroundStyle(OrcaTheme.text)
+                                        .multilineTextAlignment(.leading)
+                                    Spacer()
+                                    if name == selected {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(OrcaTheme.accent)
+                                    }
+                                }
+                            }
+                            .listRowBackground(OrcaTheme.panel)
+                        }
+                        if items.count > 800 {
+                            Text("Showing 800 of \(items.count) — refine search")
+                                .font(.caption)
+                                .foregroundStyle(OrcaTheme.muted)
+                                .listRowBackground(OrcaTheme.panel)
+                        }
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+            .background(OrcaTheme.bg)
+            .searchable(text: search, prompt: "Search \(title.lowercased())")
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        showPrinterPicker = false
+                        showProcessPicker = false
+                        showFilamentPicker = false
+                    }
+                    .foregroundStyle(OrcaTheme.accent)
+                }
+            }
+            .preferredColorScheme(.dark)
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func vendorChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(selected ? OrcaTheme.accent.opacity(0.25) : OrcaTheme.elevated)
+                .foregroundStyle(selected ? OrcaTheme.accent : OrcaTheme.muted)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Pull key process options into sheet fields after profile load / open.

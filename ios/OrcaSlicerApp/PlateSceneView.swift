@@ -15,6 +15,8 @@ struct PlateSceneView: UIViewRepresentable {
     var gcodeNode: SCNNode? = nil
     var showGCode: Bool = false
     var bedSize: SIMD2<Float> = SIMD2(220, 220)
+    /// Optional machine bed texture / cover PNG path (from system profiles)
+    var bedTexturePath: String? = nil
     var accent: UIColor = UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
 
     func makeUIView(context: Context) -> SCNView {
@@ -33,6 +35,7 @@ struct PlateSceneView: UIViewRepresentable {
         }
         context.coordinator.view = view
         context.coordinator.lastBed = bedSize
+        context.coordinator.lastTexture = bedTexturePath ?? ""
         return view
     }
 
@@ -41,16 +44,19 @@ struct PlateSceneView: UIViewRepresentable {
               let content = scene.rootNode.childNode(withName: "content", recursively: false)
         else { return }
 
-        // Bed size / recreate if missing
+        // Bed size / texture recreate if missing or changed
+        let texKey = bedTexturePath ?? ""
         let bedMissing = content.childNode(withName: "bed", recursively: false) == nil
         if bedMissing
             || context.coordinator.lastBed.x != bedSize.x
-            || context.coordinator.lastBed.y != bedSize.y {
+            || context.coordinator.lastBed.y != bedSize.y
+            || context.coordinator.lastTexture != texKey {
             content.childNode(withName: "bed", recursively: false)?.removeFromParentNode()
-            let bed = makeBedNode(size: bedSize, accent: accent)
+            let bed = makeBedNode(size: bedSize, accent: accent, texturePath: bedTexturePath)
             bed.name = "bed"
             content.addChildNode(bed)
             context.coordinator.lastBed = bedSize
+            context.coordinator.lastTexture = texKey
             // Re-frame when bed changes so plate stays in view
             if let mesh {
                 context.coordinator.frameCamera(view: view, mesh: mesh, bedSize: bedSize)
@@ -135,7 +141,7 @@ struct PlateSceneView: UIViewRepresentable {
         scene.rootNode.addChildNode(content)
 
         // Build plate (XY in slic3r / content space)
-        let bed = makeBedNode(size: bedSize, accent: accent)
+        let bed = makeBedNode(size: bedSize, accent: accent, texturePath: bedTexturePath)
         bed.name = "bed"
         content.addChildNode(bed)
 
@@ -157,7 +163,7 @@ struct PlateSceneView: UIViewRepresentable {
     }
 
     /// Bed in content/Z-up space: SCNPlane is already XY, no extra rotation.
-    private func makeBedNode(size: SIMD2<Float>, accent: UIColor) -> SCNNode {
+    private func makeBedNode(size: SIMD2<Float>, accent: UIColor, texturePath: String? = nil) -> SCNNode {
         let w = CGFloat(size.x)
         let h = CGFloat(size.y)
         let plane = SCNPlane(width: w, height: h)
@@ -165,9 +171,15 @@ struct PlateSceneView: UIViewRepresentable {
         plane.heightSegmentCount = 1
 
         let mat = SCNMaterial()
-        mat.diffuse.contents = UIColor(red: 0.18, green: 0.19, blue: 0.21, alpha: 1)
-        mat.roughness.contents = 0.9
-        mat.metalness.contents = 0.08
+        if let texturePath, let img = UIImage(contentsOfFile: texturePath) {
+            mat.diffuse.contents = img
+            mat.roughness.contents = 0.85
+            mat.metalness.contents = 0.05
+        } else {
+            mat.diffuse.contents = UIColor(red: 0.18, green: 0.19, blue: 0.21, alpha: 1)
+            mat.roughness.contents = 0.9
+            mat.metalness.contents = 0.08
+        }
         mat.isDoubleSided = true
         mat.locksAmbientWithDiffuse = true
         plane.materials = [mat]
@@ -176,8 +188,9 @@ struct PlateSceneView: UIViewRepresentable {
         // Center of plate in XY (slic3r printable origin usually 0,0)
         node.position = SCNVector3(size.x * 0.5, size.y * 0.5, -0.02)
 
-        // Grid (local plane coords: origin at plane center)
-        let grid = makeGridNode(size: size, accent: accent)
+        // Grid over plate (lighter when textured so logo stays readable)
+        let hasTex = texturePath != nil && !(texturePath ?? "").isEmpty
+        let grid = makeGridNode(size: size, accent: accent, muted: hasTex)
         node.addChildNode(grid)
 
         // Teal rim slightly larger, behind plate surface
@@ -205,7 +218,7 @@ struct PlateSceneView: UIViewRepresentable {
         return node
     }
 
-    private func makeGridNode(size: SIMD2<Float>, accent: UIColor) -> SCNNode {
+    private func makeGridNode(size: SIMD2<Float>, accent: UIColor, muted: Bool = false) -> SCNNode {
         let parent = SCNNode()
         let step: Float = 10
         var verts: [SCNVector3] = []
@@ -270,8 +283,10 @@ struct PlateSceneView: UIViewRepresentable {
             return SCNNode(geometry: geo)
         }
 
-        parent.addChildNode(lineNode(from: verts, alpha: 0.14))
-        parent.addChildNode(lineNode(from: majorVerts, alpha: 0.32))
+        let minorA: CGFloat = muted ? 0.06 : 0.14
+        let majorA: CGFloat = muted ? 0.14 : 0.32
+        parent.addChildNode(lineNode(from: verts, alpha: minorA))
+        parent.addChildNode(lineNode(from: majorVerts, alpha: majorA))
         return parent
     }
 
@@ -279,6 +294,7 @@ struct PlateSceneView: UIViewRepresentable {
         weak var view: SCNView?
         var lastMeshKey: String = ""
         var lastBed: SIMD2<Float> = SIMD2(0, 0)
+        var lastTexture: String = ""
 
         /// World-space target of bed center after content R_x(-90): (cx, 0, -cy)
         private func bedCenterWorld(bedSize: SIMD2<Float>) -> SCNVector3 {

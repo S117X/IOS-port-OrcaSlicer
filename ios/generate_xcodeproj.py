@@ -25,11 +25,15 @@ def uid():
 IDs = {k: uid() for k in [
     "project", "target", "sources", "resources", "frameworks", "product",
     "swift_app", "swift_engine", "swift_plate", "logo", "assets",
-    "process_profile", "process_profile_fine", "scenekit_fw",
+    "process_profile", "process_profile_fine", "profiles_folder", "scenekit_fw",
     "config_list_proj", "config_list_tgt",
     "debug_proj", "release_proj", "debug_tgt", "release_tgt",
     "group_main", "group_app", "group_products",
 ]}
+
+# Full official vendor trees (~79MB) for all printers/process/filament/covers
+PROFILES_DIR = ROOT / "OrcaSlicerApp" / "Resources" / "profiles"
+has_profiles = PROFILES_DIR.is_dir() and any(PROFILES_DIR.glob("*.json"))
 
 mac_lib_path = "$(SRCROOT)/../build-macos-headless-arm64/engine_bundle/lib"
 ios_sim_lib_path = "$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib"
@@ -166,7 +170,8 @@ pbx = f'''// !$*UTF8*$!
 		{IDs["assets"]} /* Assets.xcassets in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; }};
 		{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; }};
 		{IDs["process_profile_fine"]} /* process_0.16mm_Fine.json in Resources */ = {{isa = PBXBuildFile; fileRef = A1000000000000000000000A /* process_0.16mm_Fine.json */; }};
-/* End PBXBuildFile section */
+''' + (f'''		{IDs["profiles_folder"]} /* profiles in Resources */ = {{isa = PBXBuildFile; fileRef = A1000000000000000000000B /* profiles */; }};
+''' if has_profiles else '') + f'''/* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A10000000000000000000001 /* OrcaSlicerApp.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrcaSlicerApp.swift; sourceTree = "<group>"; }};
@@ -178,7 +183,8 @@ pbx = f'''// !$*UTF8*$!
 		A10000000000000000000008 /* PlateSceneView.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateSceneView.swift; sourceTree = "<group>"; }};
 		A10000000000000000000009 /* process_0.20mm_Standard.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.20mm_Standard.json; sourceTree = "<group>"; }};
 		A1000000000000000000000A /* process_0.16mm_Fine.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.16mm_Fine.json; sourceTree = "<group>"; }};
-		{IDs["product"]} /* OrcaSlicer.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; }};
+''' + ('''		A1000000000000000000000B /* profiles */ = {isa = PBXFileReference; lastKnownFileType = folder; name = profiles; path = Resources/profiles; sourceTree = "<group>"; };
+''' if has_profiles else '') + f'''		{IDs["product"]} /* OrcaSlicer.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; }};
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -202,7 +208,8 @@ pbx = f'''// !$*UTF8*$!
 				A10000000000000000000007 /* Assets.xcassets */,
 				A10000000000000000000009 /* process_0.20mm_Standard.json */,
 				A1000000000000000000000A /* process_0.16mm_Fine.json */,
-			);
+''' + ('''				A1000000000000000000000B /* profiles */,
+''' if has_profiles else '') + f'''			);
 			path = OrcaSlicerApp;
 			sourceTree = "<group>";
 		}};
@@ -271,7 +278,8 @@ pbx = f'''// !$*UTF8*$!
 				{IDs["assets"]} /* Assets.xcassets in Resources */,
 				{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */,
 				{IDs["process_profile_fine"]} /* process_0.16mm_Fine.json in Resources */,
-			);
+''' + (f'''				{IDs["profiles_folder"]} /* profiles in Resources */,
+''' if has_profiles else '') + f'''			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
 /* End PBXResourcesBuildPhase section */
@@ -365,3 +373,4 @@ print("Wrote", PROJ / "project.pbxproj")
 print("has_mac_engine=", has_mac_engine)
 print("has_ios_sim_engine=", has_ios_sim_engine)
 print("has_ios_dev_engine=", has_ios_dev_engine)
+print("has_profiles=", has_profiles, PROFILES_DIR if has_profiles else "")

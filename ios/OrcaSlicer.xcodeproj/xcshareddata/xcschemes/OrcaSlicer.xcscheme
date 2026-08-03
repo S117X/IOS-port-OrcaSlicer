@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
-   LastUpgradeVersion = "1600"
+   LastUpgradeVersion = "2660"
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
@@ -14,7 +14,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "FD91D26745E247CAB8CE0AB9"
+               BlueprintIdentifier = "80C46DF5B7E44048A6B82459"
                BuildableName = "OrcaSlicer.app"
                BlueprintName = "OrcaSlicer"
                ReferencedContainer = "container:OrcaSlicer.xcodeproj">
@@ -43,7 +43,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "FD91D26745E247CAB8CE0AB9"
+            BlueprintIdentifier = "80C46DF5B7E44048A6B82459"
             BuildableName = "OrcaSlicer.app"
             BlueprintName = "OrcaSlicer"
             ReferencedContainer = "container:OrcaSlicer.xcodeproj">

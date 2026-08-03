@@ -26,7 +26,7 @@ final class OrcaEngine: ObservableObject {
     @Published var boundsText: String = ""
     @Published var bedSize: SIMD2<Float> = SIMD2(220, 220)
     @Published var bedHeight: Float = 250
-    /// Active bundled process profile resource name (without .json)
+    /// Active process profile display name (system preset or bundled JSON id)
     @Published var activeProcessProfile: String = "process_0.20mm_Standard"
     /// Approximate solid volume from orca_session_model_info (mm³); 0 if unknown
     @Published var modelVolumeMm3: Float = 0
@@ -35,11 +35,31 @@ final class OrcaEngine: ObservableObject {
     @Published var gcodeZMin: Float = 0
     @Published var gcodeZMax: Float = 20
 
-    /// Bundled process profiles shipped in app Resources
+    // MARK: System presets (all vendors / printers / process / filament)
+    @Published var presetsLoaded = false
+    @Published var presetsLoading = false
+    @Published var printerNames: [String] = []
+    @Published var processNames: [String] = []
+    @Published var filamentNames: [String] = []
+    /// Parallel to printerNames
+    @Published var printerVendors: [String] = []
+    @Published var selectedPrinter: String = ""
+    @Published var selectedProcess: String = ""
+    @Published var selectedFilament: String = ""
+    /// File path to machine cover / bed texture for plate logo
+    @Published var bedTexturePath: String?
+    @Published var printerCoverPath: String?
+
+    /// Fallback bundled process JSONs if system presets fail to load
     static let bundledProcessProfiles: [(id: String, title: String)] = [
         ("process_0.20mm_Standard", "0.20 mm Standard"),
         ("process_0.16mm_Fine", "0.16 mm Fine"),
     ]
+
+    /// Unique vendor labels (sorted) from loaded printers
+    var vendorList: [String] {
+        Array(Set(printerVendors.filter { !$0.isEmpty })).sorted()
+    }
 
     private var session: OpaquePointer?
 
@@ -69,12 +89,234 @@ final class OrcaEngine: ObservableObject {
         } else {
             lastMessage = "Engine ready (official libslic3r)"
             applyDefaultFFF()
-            // Prefer bundled profile if present
-            loadBundledProfileIfAvailable()
+            // Writable data dir for installed system vendor trees
+            configureDataDir()
+            // Kick off full system profile install+load in background
+            Task { await loadAllSystemPresets() }
         }
         #else
         lastMessage = "Build with ORCA_LINKED + liborca_engine.a"
         #endif
+    }
+
+    #if ORCA_LINKED
+    private func configureDataDir() {
+        guard let s = session else { return }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let data = (docs ?? FileManager.default.temporaryDirectory)
+            .appendingPathComponent("OrcaSlicer", isDirectory: true)
+        try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+        _ = data.path.withCString { orca_session_set_data_dir(s, $0) }
+    }
+    #endif
+
+    /// Install + load every vendor under Bundle/profiles via official PresetBundle.
+    @MainActor
+    func loadAllSystemPresets() async {
+        #if ORCA_LINKED
+        guard let s = session else { return }
+        if presetsLoaded || presetsLoading { return }
+        presetsLoading = true
+        lastMessage = "Loading all system profiles…"
+        let sessionBits = UInt(bitPattern: s)
+        let rc = await Task.detached(priority: .userInitiated) {
+            let sess = OpaquePointer(bitPattern: sessionBits)!
+            return orca_session_load_all_presets(sess)
+        }.value
+        if rc != 0 {
+            let err = orca_session_last_error(s).map { String(cString: $0) } ?? "load failed"
+            lastMessage = "System profiles rc=\(rc): \(err) — using bundled process"
+            presetsLoading = false
+            loadBundledProfileIfAvailable()
+            return
+        }
+        refreshPresetLists()
+        presetsLoaded = orca_session_presets_loaded(s) != 0
+        presetsLoading = false
+        // Prefer a well-known printer if present (Voron / BBL / generic)
+        let preferred = [
+            "Voron 2.4 300 0.4 nozzle",
+            "Voron 2.4 250 0.4 nozzle",
+            "Bambu Lab X1 Carbon 0.4 nozzle",
+            "Generic Klipper Printer 0.4 nozzle",
+        ]
+        var picked = false
+        for name in preferred where printerNames.contains(name) {
+            if selectPrinter(name) { picked = true; break }
+        }
+        if !picked, let first = printerNames.first {
+            _ = selectPrinter(first)
+        }
+        lastMessage = String(
+            format: "Loaded %d printers · %d process · %d filament",
+            printerNames.count, processNames.count, filamentNames.count
+        )
+        #endif
+    }
+
+    #if ORCA_LINKED
+    private func refreshPresetLists() {
+        guard let s = session else { return }
+        let pc = Int(orca_session_printer_count(s))
+        var printers: [String] = []
+        var vendors: [String] = []
+        printers.reserveCapacity(pc)
+        vendors.reserveCapacity(pc)
+        for i in 0..<pc {
+            if let c = orca_session_printer_name(s, Int32(i)) {
+                printers.append(String(cString: c))
+            }
+            if let v = orca_session_printer_vendor(s, Int32(i)) {
+                vendors.append(String(cString: v))
+            } else {
+                vendors.append("")
+            }
+        }
+        printerNames = printers
+        printerVendors = vendors
+
+        let prc = Int(orca_session_process_count(s))
+        var procs: [String] = []
+        procs.reserveCapacity(prc)
+        for i in 0..<prc {
+            if let c = orca_session_process_name(s, Int32(i)) {
+                procs.append(String(cString: c))
+            }
+        }
+        processNames = procs
+
+        let fc = Int(orca_session_filament_count(s))
+        var fils: [String] = []
+        fils.reserveCapacity(fc)
+        for i in 0..<fc {
+            if let c = orca_session_filament_name(s, Int32(i)) {
+                fils.append(String(cString: c))
+            }
+        }
+        filamentNames = fils
+
+        if let c = orca_session_selected_printer(s) {
+            selectedPrinter = String(cString: c)
+        }
+        if let c = orca_session_selected_process(s) {
+            selectedProcess = String(cString: c)
+            if !selectedProcess.isEmpty { activeProcessProfile = selectedProcess }
+        }
+        if let c = orca_session_selected_filament(s) {
+            selectedFilament = String(cString: c)
+        }
+    }
+
+    private func refreshCoverAndBedTexture() {
+        guard let s = session else { return }
+        var buf = [CChar](repeating: 0, count: 2048)
+        if orca_session_printer_cover_path(s, &buf, buf.count) == 0 {
+            printerCoverPath = String(cString: buf)
+        } else {
+            printerCoverPath = nil
+        }
+        buf = [CChar](repeating: 0, count: 2048)
+        if orca_session_printer_bed_texture_path(s, &buf, buf.count) == 0 {
+            bedTexturePath = String(cString: buf)
+        } else {
+            bedTexturePath = printerCoverPath
+        }
+    }
+    #endif
+
+    @discardableResult
+    func selectPrinter(_ name: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, presetsLoaded else { return false }
+        let rc = name.withCString { orca_session_select_printer(s, $0) }
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "select_printer failed"
+            return false
+        }
+        // Apply machine+process+filament → session config + bed size
+        let arc = orca_session_apply_presets(s)
+        if arc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "apply_presets failed"
+            return false
+        }
+        selectedPrinter = name
+        if let c = orca_session_selected_process(s) {
+            selectedProcess = String(cString: c)
+            activeProcessProfile = selectedProcess
+        }
+        if let c = orca_session_selected_filament(s) {
+            selectedFilament = String(cString: c)
+        }
+        refreshBedSize()
+        refreshCoverAndBedTexture()
+        lastMessage = "Printer: \(name) · bed \(Int(bedSize.x))×\(Int(bedSize.y))"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    @discardableResult
+    func selectProcess(_ name: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, presetsLoaded else { return false }
+        let rc = name.withCString { orca_session_select_process(s, $0) }
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "select_process failed"
+            return false
+        }
+        _ = orca_session_apply_presets(s)
+        selectedProcess = name
+        activeProcessProfile = name
+        refreshBedSize()
+        lastMessage = "Process: \(name)"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    @discardableResult
+    func selectFilament(_ name: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, presetsLoaded else { return false }
+        let rc = name.withCString { orca_session_select_filament(s, $0) }
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "select_filament failed"
+            return false
+        }
+        _ = orca_session_apply_presets(s)
+        selectedFilament = name
+        lastMessage = "Filament: \(name)"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Printers for a vendor (empty vendor = all). Optional search filter.
+    func filteredPrinters(vendor: String?, search: String) -> [String] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return printerNames.enumerated().compactMap { idx, name in
+            if let vendor, !vendor.isEmpty {
+                let v = idx < printerVendors.count ? printerVendors[idx] : ""
+                if v.caseInsensitiveCompare(vendor) != .orderedSame { return nil }
+            }
+            if !q.isEmpty && !name.lowercased().contains(q) { return nil }
+            return name
+        }
+    }
+
+    func filteredProcesses(search: String) -> [String] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if q.isEmpty { return processNames }
+        return processNames.filter { $0.lowercased().contains(q) }
+    }
+
+    func filteredFilaments(search: String) -> [String] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if q.isEmpty { return filamentNames }
+        return filamentNames.filter { $0.lowercased().contains(q) }
     }
 
     deinit {

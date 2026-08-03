@@ -26,6 +26,9 @@
 #include "libslic3r/Format/3mf.hpp"
 // Generated into build dir as libslic3r_version.h (include path via libslic3r target)
 #include "libslic3r_version.h"
+#include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/AppConfig.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -34,11 +37,14 @@
 #include <cmath>
 #include <functional>
 #include <algorithm>
+#include <boost/filesystem.hpp>
 
 using namespace Slic3r;
+namespace fs = boost::filesystem;
 
 struct orca_session {
     std::string resources_path;
+    std::string data_dir_path;
     std::string last_error;
     Model       model;
     DynamicPrintConfig config;
@@ -52,11 +58,101 @@ struct orca_session {
     float       last_filament_mm3{0.f};
     int         last_layers{0};
 
+    // Official system preset catalog
+    std::unique_ptr<PresetBundle> preset_bundle;
+    bool        presets_loaded{false};
+    std::vector<std::string> printer_names;
+    std::vector<std::string> process_names;
+    std::vector<std::string> filament_names;
+    std::vector<std::string> printer_vendors; // parallel to printer_names
+    std::string cover_path_cache;
+    std::string bed_texture_cache;
+    std::string selected_printer_cache;
+    std::string selected_process_cache;
+    std::string selected_filament_cache;
+
     void set_error(const std::string &e) { last_error = e; }
     void clear_error() { last_error.clear(); }
     void report_progress(int pct, const char *msg) {
         if (progress_fn)
             progress_fn(pct, msg, progress_user);
+    }
+
+    void refresh_name_caches() {
+        printer_names.clear();
+        process_names.clear();
+        filament_names.clear();
+        printer_vendors.clear();
+        if (!preset_bundle)
+            return;
+        for (const Preset &p : preset_bundle->printers) {
+            if (p.is_default)
+                continue;
+            printer_names.push_back(p.name);
+            if (p.vendor)
+                printer_vendors.push_back(p.vendor->name);
+            else
+                printer_vendors.push_back("");
+        }
+        for (const Preset &p : preset_bundle->prints) {
+            if (p.is_default)
+                continue;
+            process_names.push_back(p.name);
+        }
+        for (const Preset &p : preset_bundle->filaments) {
+            if (p.is_default)
+                continue;
+            filament_names.push_back(p.name);
+        }
+        std::sort(printer_names.begin(), printer_names.end());
+        // Keep vendors aligned after sort — rebuild vendors map
+        std::vector<std::string> vendors_sorted;
+        vendors_sorted.reserve(printer_names.size());
+        for (const std::string &n : printer_names) {
+            const Preset *pp = preset_bundle->printers.find_preset(n);
+            if (pp && pp->vendor)
+                vendors_sorted.push_back(pp->vendor->name);
+            else
+                vendors_sorted.push_back("");
+        }
+        printer_vendors = std::move(vendors_sorted);
+        std::sort(process_names.begin(), process_names.end());
+        std::sort(filament_names.begin(), filament_names.end());
+        sync_selected_caches();
+    }
+
+    void sync_selected_caches() {
+        selected_printer_cache.clear();
+        selected_process_cache.clear();
+        selected_filament_cache.clear();
+        if (!preset_bundle)
+            return;
+        try {
+            selected_printer_cache = preset_bundle->printers.get_selected_preset().name;
+            selected_process_cache  = preset_bundle->prints.get_selected_preset().name;
+            selected_filament_cache = preset_bundle->filaments.get_selected_preset().name;
+        } catch (...) {
+        }
+    }
+
+    /** Resolve cover / bed art under profiles/{vendor}/… with several name variants. */
+    bool resolve_profile_image(const std::string &vendor, const std::string &model,
+                               const std::string &suffix, std::string &out) const {
+        if (resources_path.empty() || vendor.empty() || model.empty())
+            return false;
+        const std::string candidates[] = {
+            model + suffix,
+            model + "_cover.png",
+            model + ".png",
+        };
+        for (const std::string &file : candidates) {
+            fs::path p = fs::path(resources_path) / "profiles" / vendor / file;
+            if (fs::exists(p)) {
+                out = p.string();
+                return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -875,6 +971,340 @@ int orca_session_last_slice_stats(
     if (filament_mm3) *filament_mm3 = s->last_filament_mm3;
     if (layers) *layers = s->last_layers;
     return 0;
+}
+
+int orca_session_set_data_dir(orca_session_t *s, const char *data_path)
+{
+    if (!s || !data_path || !*data_path)
+        return -1;
+    try {
+        s->data_dir_path = data_path;
+        set_data_dir(s->data_dir_path);
+        return 0;
+    } catch (...) {
+        s->set_error("set_data_dir failed");
+        return -2;
+    }
+}
+
+int orca_session_load_all_presets(orca_session_t *s)
+{
+    if (!s)
+        return -1;
+    s->clear_error();
+    try {
+        if (s->resources_path.empty()) {
+            s->set_error("resources_path empty");
+            return -2;
+        }
+        if (s->data_dir_path.empty()) {
+            // Fallback under resources (may be read-only on device — prefer set_data_dir)
+            s->data_dir_path = (fs::path(s->resources_path) / "orca_data").string();
+        }
+        set_resources_dir(s->resources_path);
+        set_data_dir(s->data_dir_path);
+        set_var_dir(s->resources_path);
+
+        // Collect vendor index names from resources/profiles/*.json
+        fs::path prof = fs::path(s->resources_path) / "profiles";
+        if (!fs::exists(prof)) {
+            s->set_error("profiles/ not found in resources (bundle full profiles)");
+            return -3;
+        }
+        std::vector<std::string> vendors;
+        for (fs::directory_iterator it(prof), end; it != end; ++it) {
+            if (!fs::is_regular_file(it->path()))
+                continue;
+            if (it->path().extension() != ".json")
+                continue;
+            std::string stem = it->path().stem().string();
+            if (stem == "blacklist")
+                continue;
+            vendors.push_back(stem);
+        }
+        if (vendors.empty()) {
+            s->set_error("no vendor json in profiles/");
+            return -4;
+        }
+
+        s->preset_bundle = std::make_unique<PresetBundle>();
+        s->preset_bundle->setup_directories();
+
+        // Install each vendor into data_dir/system (continue on individual failures)
+        // Prefer OrcaFilamentLibrary first so inheritance base exists on disk
+        std::sort(vendors.begin(), vendors.end(), [](const std::string &a, const std::string &b) {
+            if (a == "OrcaFilamentLibrary") return true;
+            if (b == "OrcaFilamentLibrary") return false;
+            return a < b;
+        });
+        int installed = 0;
+        for (const std::string &v : vendors) {
+            try {
+                if (install_vendor_bundles_from_resources({v}))
+                    ++installed;
+            } catch (...) {
+                // keep going
+            }
+        }
+        if (installed == 0) {
+            s->set_error("install_vendor_bundles_from_resources failed for all vendors");
+            return -5;
+        }
+
+        // Public path: load_presets → private load_system_presets_from_json
+        AppConfig app_config;
+        try {
+            s->preset_bundle->load_presets(
+                app_config, ForwardCompatibilitySubstitutionRule::EnableSilent);
+        } catch (const std::exception &ex) {
+            s->set_error(std::string("load_presets: ") + ex.what());
+            return -6;
+        }
+
+        // Make all system presets visible for mobile catalog
+        for (Preset &p : s->preset_bundle->printers)
+            p.is_visible = true;
+        for (Preset &p : s->preset_bundle->prints)
+            p.is_visible = true;
+        for (Preset &p : s->preset_bundle->filaments)
+            p.is_visible = true;
+
+        s->preset_bundle->update_compatible(PresetSelectCompatibleType::Never);
+        s->refresh_name_caches();
+        s->presets_loaded = !s->printer_names.empty();
+        if (!s->presets_loaded) {
+            s->set_error(std::string("no printers after load; installed=") + std::to_string(installed));
+            return -7;
+        }
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("load_all_presets: ") + ex.what());
+        return -7;
+    } catch (...) {
+        s->set_error("load_all_presets: unknown error");
+        return -7;
+    }
+}
+
+int orca_session_printer_count(orca_session_t *s)
+{
+    return s ? int(s->printer_names.size()) : 0;
+}
+const char *orca_session_printer_name(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= int(s->printer_names.size()))
+        return nullptr;
+    return s->printer_names[size_t(index)].c_str();
+}
+const char *orca_session_printer_vendor(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= int(s->printer_vendors.size()))
+        return nullptr;
+    return s->printer_vendors[size_t(index)].c_str();
+}
+
+int orca_session_process_count(orca_session_t *s)
+{
+    return s ? int(s->process_names.size()) : 0;
+}
+const char *orca_session_process_name(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= int(s->process_names.size()))
+        return nullptr;
+    return s->process_names[size_t(index)].c_str();
+}
+
+int orca_session_filament_count(orca_session_t *s)
+{
+    return s ? int(s->filament_names.size()) : 0;
+}
+const char *orca_session_filament_name(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= int(s->filament_names.size()))
+        return nullptr;
+    return s->filament_names[size_t(index)].c_str();
+}
+
+int orca_session_select_printer(orca_session_t *s, const char *name)
+{
+    if (!s || !name || !s->preset_bundle)
+        return -1;
+    try {
+        if (!s->preset_bundle->printers.select_preset_by_name(name, true)) {
+            s->set_error(std::string("printer not found: ") + name);
+            return -2;
+        }
+        s->preset_bundle->update_compatible(PresetSelectCompatibleType::Always);
+        // Prefer printer's default process/filament when present
+        {
+            const Preset &pr = s->preset_bundle->printers.get_selected_preset();
+            std::string def_print = pr.config.opt_string("default_print_profile");
+            std::string def_fil;
+            if (const ConfigOptionStrings *dfs = pr.config.option<ConfigOptionStrings>("default_filament_profile")) {
+                if (!dfs->values.empty())
+                    def_fil = dfs->values.front();
+            } else {
+                def_fil = pr.config.opt_string("default_filament_profile");
+            }
+            if (!def_print.empty())
+                s->preset_bundle->prints.select_preset_by_name(def_print, true);
+            else
+                s->preset_bundle->prints.select_preset(s->preset_bundle->prints.first_compatible_idx());
+            if (!def_fil.empty()) {
+                s->preset_bundle->filaments.select_preset_by_name(def_fil, true);
+                s->preset_bundle->set_filament_preset(0, def_fil);
+            } else {
+                s->preset_bundle->filaments.select_preset(s->preset_bundle->filaments.first_compatible_idx());
+                s->preset_bundle->set_filament_preset(
+                    0, s->preset_bundle->filaments.get_selected_preset_name());
+            }
+        }
+        s->sync_selected_caches();
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("select_printer: ") + ex.what());
+        return -3;
+    }
+}
+
+int orca_session_select_process(orca_session_t *s, const char *name)
+{
+    if (!s || !name || !s->preset_bundle)
+        return -1;
+    try {
+        if (!s->preset_bundle->prints.select_preset_by_name(name, true)) {
+            s->set_error(std::string("process not found: ") + name);
+            return -2;
+        }
+        s->sync_selected_caches();
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("select_process: ") + ex.what());
+        return -3;
+    }
+}
+
+int orca_session_select_filament(orca_session_t *s, const char *name)
+{
+    if (!s || !name || !s->preset_bundle)
+        return -1;
+    try {
+        if (!s->preset_bundle->filaments.select_preset_by_name(name, true)) {
+            s->set_error(std::string("filament not found: ") + name);
+            return -2;
+        }
+        s->preset_bundle->set_filament_preset(0, name);
+        s->sync_selected_caches();
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("select_filament: ") + ex.what());
+        return -3;
+    }
+}
+
+int orca_session_apply_presets(orca_session_t *s)
+{
+    if (!s || !s->preset_bundle)
+        return -1;
+    try {
+        s->config = s->preset_bundle->full_config(true);
+        s->has_config = true;
+        s->sync_selected_caches();
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("apply_presets: ") + ex.what());
+        return -2;
+    }
+}
+
+static int copy_path_to_buf(orca_session_t *s, const std::string &path, char *buf, size_t buf_len)
+{
+    if (path.empty())
+        return -3;
+    if (path.size() >= buf_len) {
+        s->set_error("buffer too small for path");
+        return -4;
+    }
+    std::memcpy(buf, path.c_str(), path.size() + 1);
+    return 0;
+}
+
+int orca_session_printer_cover_path(orca_session_t *s, char *buf, size_t buf_len)
+{
+    if (!s || !buf || buf_len == 0 || !s->preset_bundle)
+        return -1;
+    buf[0] = '\0';
+    try {
+        const Preset &pr = s->preset_bundle->printers.get_selected_preset();
+        std::string model = pr.config.opt_string("printer_model");
+        std::string vendor;
+        if (pr.vendor)
+            vendor = pr.vendor->id.empty() ? pr.vendor->name : pr.vendor->id;
+        if (model.empty())
+            return -2;
+        // Prefer official cover naming, then bed texture, then vendor name variants
+        s->cover_path_cache.clear();
+        if (!vendor.empty() && s->resolve_profile_image(vendor, model, "_cover.png", s->cover_path_cache))
+            return copy_path_to_buf(s, s->cover_path_cache, buf, buf_len);
+        // Vendor folder may use name instead of id
+        if (pr.vendor && !pr.vendor->name.empty() && pr.vendor->name != vendor) {
+            if (s->resolve_profile_image(pr.vendor->name, model, "_cover.png", s->cover_path_cache))
+                return copy_path_to_buf(s, s->cover_path_cache, buf, buf_len);
+        }
+        // Fallback: official bed texture (often the plate logo)
+        std::string tex = s->preset_bundle->get_texture_for_printer_model(model);
+        if (!tex.empty() && fs::exists(tex)) {
+            s->cover_path_cache = tex;
+            return copy_path_to_buf(s, s->cover_path_cache, buf, buf_len);
+        }
+        return -3;
+    } catch (...) {
+        return -5;
+    }
+}
+
+int orca_session_printer_bed_texture_path(orca_session_t *s, char *buf, size_t buf_len)
+{
+    if (!s || !buf || buf_len == 0 || !s->preset_bundle)
+        return -1;
+    buf[0] = '\0';
+    try {
+        const Preset &pr = s->preset_bundle->printers.get_selected_preset();
+        std::string model = pr.config.opt_string("printer_model");
+        if (model.empty())
+            return -2;
+        std::string tex = s->preset_bundle->get_texture_for_printer_model(model);
+        if (tex.empty() || !fs::exists(tex)) {
+            // Fall back to cover art as plate graphic
+            char tmp[1024];
+            if (orca_session_printer_cover_path(s, tmp, sizeof(tmp)) != 0)
+                return -3;
+            s->bed_texture_cache = tmp;
+            return copy_path_to_buf(s, s->bed_texture_cache, buf, buf_len);
+        }
+        s->bed_texture_cache = tex;
+        return copy_path_to_buf(s, s->bed_texture_cache, buf, buf_len);
+    } catch (...) {
+        return -5;
+    }
+}
+
+const char *orca_session_selected_printer(orca_session_t *s)
+{
+    return s ? s->selected_printer_cache.c_str() : "";
+}
+const char *orca_session_selected_process(orca_session_t *s)
+{
+    return s ? s->selected_process_cache.c_str() : "";
+}
+const char *orca_session_selected_filament(orca_session_t *s)
+{
+    return s ? s->selected_filament_cache.c_str() : "";
+}
+
+int orca_session_presets_loaded(orca_session_t *s)
+{
+    return (s && s->presets_loaded) ? 1 : 0;
 }
 
 const char *orca_session_last_error(orca_session_t *s)
