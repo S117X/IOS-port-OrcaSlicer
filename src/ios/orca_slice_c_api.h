@@ -490,6 +490,68 @@ ORCA_API int orca_session_snapshot(orca_session_t *s, const char *path);
  */
 ORCA_API int orca_session_restore_snapshot(orca_session_t *s, const char *path);
 
+/**
+ * Facet painting (desktop GLGizmoFdmSupports / Seam / MMU / FuzzySkin).
+ * Writes ModelVolume FacetsAnnotation via official TriangleSelector.
+ *
+ * paint_kind:
+ *   0 = support (supported_facets)  state: 0=none 1=enforcer 2=blocker
+ *   1 = seam (seam_facets)          state: 0=none 1=enforcer 2=blocker
+ *   2 = mmu / multi-material        state: 0=none, 1..16 = extruder (EnforcerBlockerType)
+ *   3 = fuzzy skin                  state: 0=none 1=fuzzy (ENFORCER)
+ *
+ * object_index: specific object, or -1 for auto (nearest object under hit).
+ * x,y,z: hit point in world/slic3r mm (instance-transformed).
+ * radius_mm: brush radius; triangles whose centroid is within radius are painted.
+ * @return number of facets painted, or <0 on error
+ */
+ORCA_API int orca_session_paint_at(
+    orca_session_t *s,
+    int object_index,
+    float x, float y, float z,
+    int paint_kind,
+    int state,
+    float radius_mm);
+
+/**
+ * Paint every original facet on model-part volumes of object (fill).
+ * object_index must be >= 0. @return facets painted or <0.
+ */
+ORCA_API int orca_session_paint_fill(
+    orca_session_t *s, int object_index, int paint_kind, int state);
+
+/**
+ * Clear all painting of paint_kind on object (-1 = all objects).
+ * @return 0 on success
+ */
+ORCA_API int orca_session_paint_clear(
+    orca_session_t *s, int object_index, int paint_kind);
+
+/**
+ * Count facets currently annotated for paint_kind (any non-NONE state if state<0).
+ * object_index -1 = all objects.
+ * @return 0 on success
+ */
+ORCA_API int orca_session_paint_stats(
+    orca_session_t *s, int object_index, int paint_kind, int state,
+    int *painted_count);
+
+/**
+ * Export painted facets as world-space mesh for SceneKit overlay.
+ * state: specific EnforcerBlockerType value, or -1 for any non-NONE.
+ * Free *out_positions / *out_indices with orca_free().
+ * @return 0 on success (empty mesh is still 0 with counts 0)
+ */
+ORCA_API int orca_session_export_paint_mesh(
+    orca_session_t *s,
+    int object_index,
+    int paint_kind,
+    int state,
+    float **out_positions,
+    size_t *out_vertex_count,
+    uint32_t **out_indices,
+    size_t *out_index_count);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);

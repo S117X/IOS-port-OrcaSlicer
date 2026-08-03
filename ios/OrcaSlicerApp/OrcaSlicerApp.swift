@@ -70,6 +70,10 @@ struct OrcaRootView: View {
         case rotate = "Rotate"
         case scale = "Scale"
         case measure = "Measure"
+        case paintSupport = "Support paint"
+        case paintSeam = "Seam paint"
+        case paintMMU = "MMU paint"
+        case paintFuzzy = "Fuzzy paint"
     }
 
     @State private var gizmoMode: GizmoMode = .select
@@ -83,6 +87,51 @@ struct OrcaRootView: View {
     @State private var measurePointA: SIMD3<Float>?
     @State private var measurePointB: SIMD3<Float>?
     @State private var measureDistanceText = ""
+    /// Paint tool: 1 = enforcer / extruder / fuzzy, 2 = blocker (support/seam), 0 = erase
+    @State private var paintToolState: Int = 1
+    @State private var paintBrushRadius: Float = 2.0
+    @State private var paintMMUExtruder: Int = 1
+    @State private var paintStrokeNeedsUndo = true
+
+    private var isPaintGizmo: Bool {
+        switch gizmoMode {
+        case .paintSupport, .paintSeam, .paintMMU, .paintFuzzy: return true
+        default: return false
+        }
+    }
+
+    private var activePaintKind: OrcaEngine.PaintKind? {
+        switch gizmoMode {
+        case .paintSupport: return .support
+        case .paintSeam: return .seam
+        case .paintMMU: return .mmu
+        case .paintFuzzy: return .fuzzy
+        default: return nil
+        }
+    }
+
+    private var paintOverlayUIColor: UIColor {
+        switch gizmoMode {
+        case .paintSupport: return UIColor(red: 0.15, green: 0.85, blue: 0.35, alpha: 0.88)
+        case .paintSeam: return UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 0.88)
+        case .paintMMU: return UIColor(red: 0.45, green: 0.45, blue: 1.0, alpha: 0.88)
+        case .paintFuzzy: return UIColor(red: 0.85, green: 0.35, blue: 0.85, alpha: 0.88)
+        default: return UIColor(red: 0.2, green: 0.85, blue: 0.35, alpha: 0.85)
+        }
+    }
+
+    private var currentPaintState: Int {
+        switch gizmoMode {
+        case .paintMMU:
+            return paintToolState == 0 ? 0 : max(1, min(16, paintMMUExtruder))
+        case .paintFuzzy:
+            return paintToolState == 0 ? 0 : 1
+        case .paintSupport, .paintSeam:
+            return paintToolState // 0 erase, 1 enforcer, 2 blocker
+        default:
+            return paintToolState
+        }
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -1700,7 +1749,15 @@ struct OrcaRootView: View {
                             measurePointB = nil
                             measureDistanceText = ""
                         }
-                        status = "Gizmo: \(mode.rawValue)"
+                        if let kind = paintKind(for: mode) {
+                            paintStrokeNeedsUndo = true
+                            engine.refreshPaintOverlay(kind: kind)
+                            engine.refreshPaintStats(kind: kind)
+                            status = "Paint: \(mode.rawValue) · brush \(String(format: "%.1f", paintBrushRadius)) mm"
+                        } else {
+                            engine.clearPaintOverlay()
+                            status = "Gizmo: \(mode.rawValue)"
+                        }
                     }
                 }
                 if gizmoMode == .rotate {
@@ -1718,6 +1775,9 @@ struct OrcaRootView: View {
                     toolChip("×1.1", "plus.magnifyingglass") {
                         engine.scale(factor: 1.1); status = engine.lastMessage
                     }
+                }
+                if isPaintGizmo {
+                    paintToolChips
                 }
                 toolChip("Center", "scope") { engine.centerOnBed(); status = engine.lastMessage }
                 toolChip("Arrange", "square.grid.2x2") {
@@ -1761,6 +1821,9 @@ struct OrcaRootView: View {
                 accent: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1),
                 moveMode: (moveMode || gizmoMode == .move) && mainTab == .prepare && engine.hasModel,
                 measureMode: gizmoMode == .measure && mainTab == .prepare,
+                paintMode: isPaintGizmo && mainTab == .prepare && engine.hasModel,
+                paintOverlay: isPaintGizmo ? engine.paintOverlayMesh : nil,
+                paintOverlayColor: paintOverlayUIColor,
                 onDragCommit: { dx, dy in
                     engine.translate(dx: dx, dy: dy, recordUndo: true)
                     status = engine.lastMessage
@@ -1768,7 +1831,8 @@ struct OrcaRootView: View {
                 onDragLive: { dx, dy in
                     status = String(format: "Drag Δ%.1f, %.1f mm", dx, dy)
                 },
-                onMeasurePick: { handleMeasurePick($0) }
+                onMeasurePick: { handleMeasurePick($0) },
+                onPaintHit: { pt, isBegin in handlePaintHit(pt, isBegin: isBegin) }
             )
             .overlay(alignment: .topLeading) {
                 hintOverlay.padding(12)
@@ -1780,6 +1844,51 @@ struct OrcaRootView: View {
                 if mainTab == .device {
                     devicePlaceholder
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var paintToolChips: some View {
+        Group {
+            if gizmoMode == .paintSupport || gizmoMode == .paintSeam {
+                toolChip("Enforce", "plus.circle", selected: paintToolState == 1) {
+                    paintToolState = 1; status = "Brush: enforcer"
+                }
+                toolChip("Block", "minus.circle", selected: paintToolState == 2) {
+                    paintToolState = 2; status = "Brush: blocker"
+                }
+            } else if gizmoMode == .paintMMU {
+                toolChip("Ext \(paintMMUExtruder)", "paintpalette", selected: paintToolState != 0) {
+                    paintToolState = 1
+                    paintMMUExtruder = paintMMUExtruder >= 4 ? 1 : paintMMUExtruder + 1
+                    status = "MMU extruder \(paintMMUExtruder)"
+                }
+            } else if gizmoMode == .paintFuzzy {
+                toolChip("Fuzzy", "scribble.variable", selected: paintToolState == 1) {
+                    paintToolState = 1; status = "Brush: fuzzy skin"
+                }
+            }
+            toolChip("Erase", "eraser", selected: paintToolState == 0) {
+                paintToolState = 0; status = "Brush: erase"
+            }
+            toolChip("R \(String(format: "%.0f", paintBrushRadius))", "circle.dashed") {
+                // Cycle brush radius 1 → 2 → 4 → 8 → 1
+                if paintBrushRadius < 1.5 { paintBrushRadius = 2 }
+                else if paintBrushRadius < 3 { paintBrushRadius = 4 }
+                else if paintBrushRadius < 6 { paintBrushRadius = 8 }
+                else { paintBrushRadius = 1 }
+                status = String(format: "Brush radius %.0f mm", paintBrushRadius)
+            }
+            toolChip("Fill all", "paintbrush.fill") {
+                guard let kind = activePaintKind else { return }
+                _ = engine.paintFill(kind: kind, state: currentPaintState)
+                status = engine.lastMessage
+            }
+            toolChip("Clear", "trash") {
+                guard let kind = activePaintKind else { return }
+                _ = engine.paintClear(kind: kind)
+                status = engine.lastMessage
             }
         }
     }
@@ -1798,6 +1907,17 @@ struct OrcaRootView: View {
             if gizmoMode == .measure && !measureDistanceText.isEmpty {
                 Text(measureDistanceText)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(OrcaTheme.panel.opacity(0.95))
+                    .clipShape(Capsule())
+            }
+            if isPaintGizmo && mainTab == .prepare {
+                Text(engine.paintStatsText.isEmpty
+                     ? "\(gizmoMode.rawValue) · r=\(String(format: "%.0f", paintBrushRadius)) mm"
+                     : engine.paintStatsText)
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(OrcaTheme.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -1824,6 +1944,33 @@ struct OrcaRootView: View {
         status = measureDistanceText
     }
 
+    private func handlePaintHit(_ pt: SIMD3<Float>, isBegin: Bool) {
+        guard let kind = activePaintKind else { return }
+        if isBegin { paintStrokeNeedsUndo = true }
+        let record = paintStrokeNeedsUndo
+        let n = engine.paintAt(
+            x: pt.x, y: pt.y, z: pt.z,
+            kind: kind,
+            state: currentPaintState,
+            radiusMm: paintBrushRadius,
+            recordUndo: record
+        )
+        if record && n >= 0 { paintStrokeNeedsUndo = false }
+        if n > 0 {
+            status = engine.lastMessage
+        }
+    }
+
+    private func paintKind(for mode: GizmoMode) -> OrcaEngine.PaintKind? {
+        switch mode {
+        case .paintSupport: return .support
+        case .paintSeam: return .seam
+        case .paintMMU: return .mmu
+        case .paintFuzzy: return .fuzzy
+        default: return nil
+        }
+    }
+
     private func gizmoIcon(_ mode: GizmoMode) -> String {
         switch mode {
         case .select: return "cursorarrow"
@@ -1831,6 +1978,10 @@ struct OrcaRootView: View {
         case .rotate: return "rotate.3d"
         case .scale: return "arrow.up.left.and.arrow.down.right"
         case .measure: return "ruler"
+        case .paintSupport: return "paintbrush.pointed"
+        case .paintSeam: return "line.diagonal"
+        case .paintMMU: return "paintpalette"
+        case .paintFuzzy: return "scribble.variable"
         }
     }
 

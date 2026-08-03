@@ -37,6 +37,7 @@
 #include "libslic3r/CutUtils.hpp"
 #include "libslic3r/MeshBoolean.hpp"
 #include "libslic3r/Geometry.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -46,6 +47,7 @@
 #include <cmath>
 #include <functional>
 #include <algorithm>
+#include <limits>
 #include <boost/filesystem.hpp>
 
 using namespace Slic3r;
@@ -2501,6 +2503,446 @@ int orca_session_restore_snapshot(orca_session_t *s, const char *path)
     if (orca_session_bed_size(s, &w2, &d2, &h2) != 0 || w2 < 1.f)
         orca_session_set_printable_area(s, bw, bd, bh);
     return 0;
+}
+
+} // extern "C"
+
+// -----------------------------------------------------------------------------
+// Facet painting (support / seam / MMU / fuzzy) via ModelVolume FacetsAnnotation
+// Helpers are C++-only (not extern "C") because they return Eigen types.
+// -----------------------------------------------------------------------------
+
+namespace {
+
+FacetsAnnotation *paint_annotation_for(ModelVolume *vol, int paint_kind)
+{
+    if (!vol)
+        return nullptr;
+    switch (paint_kind) {
+    case 0: return &vol->supported_facets;
+    case 1: return &vol->seam_facets;
+    case 2: return &vol->mmu_segmentation_facets;
+    case 3: return &vol->fuzzy_skin_facets;
+    default: return nullptr;
+    }
+}
+
+bool paint_state_valid(int paint_kind, int state)
+{
+    if (state < 0)
+        return false;
+    if (paint_kind == 0 || paint_kind == 1)
+        return state <= 2; // NONE / ENFORCER / BLOCKER
+    if (paint_kind == 2)
+        return state <= int(EnforcerBlockerType::ExtruderMax);
+    if (paint_kind == 3)
+        return state <= 1; // NONE / FUZZY_SKIN(=ENFORCER)
+    return false;
+}
+
+Transform3d volume_world_matrix(const ModelObject *obj, const ModelVolume *vol)
+{
+    Transform3d inst = Transform3d::Identity();
+    if (obj && !obj->instances.empty() && obj->instances[0])
+        inst = obj->instances[0]->get_transformation().get_matrix();
+    return inst * vol->get_matrix();
+}
+
+int paint_volume_near_point(
+    ModelVolume *vol,
+    const Transform3d &world_matrix,
+    const Vec3f &hit_world,
+    float radius_mm,
+    int paint_kind,
+    EnforcerBlockerType ebt)
+{
+    FacetsAnnotation *ann = paint_annotation_for(vol, paint_kind);
+    if (!ann)
+        return 0;
+    const indexed_triangle_set &its = vol->mesh().its;
+    if (its.indices.empty())
+        return 0;
+
+    const float r2 = radius_mm * radius_mm;
+    const float r_min = std::max(radius_mm, 0.15f);
+    const float r2_min = r_min * r_min;
+
+    TriangleSelector selector(vol->mesh());
+    // Keep existing paint when present
+    if (!ann->empty())
+        selector.deserialize(ann->get_data(), false);
+
+    int painted = 0;
+    int closest_idx = -1;
+    float closest_d2 = std::numeric_limits<float>::max();
+
+    for (int fi = 0; fi < int(its.indices.size()); ++fi) {
+        const stl_triangle_vertex_indices &face = its.indices[size_t(fi)];
+        const Vec3f &a = its.vertices[size_t(face[0])];
+        const Vec3f &b = its.vertices[size_t(face[1])];
+        const Vec3f &c = its.vertices[size_t(face[2])];
+        const Vec3f centroid_local = (a + b + c) / 3.f;
+        const Vec3d cw = world_matrix * centroid_local.cast<double>();
+        const Vec3f cwf = cw.cast<float>();
+        const float d2 = (cwf - hit_world).squaredNorm();
+        if (d2 < closest_d2) {
+            closest_d2 = d2;
+            closest_idx = fi;
+        }
+        if (d2 <= r2) {
+            selector.set_facet(fi, ebt);
+            ++painted;
+        }
+    }
+    // Always paint at least the nearest facet if within a small snap radius
+    if (painted == 0 && closest_idx >= 0 && closest_d2 <= r2_min * 4.f) {
+        selector.set_facet(closest_idx, ebt);
+        painted = 1;
+    }
+    if (painted > 0)
+        ann->set(selector);
+    return painted;
+}
+
+int paint_volume_all(ModelVolume *vol, int paint_kind, EnforcerBlockerType ebt)
+{
+    FacetsAnnotation *ann = paint_annotation_for(vol, paint_kind);
+    if (!ann)
+        return 0;
+    const indexed_triangle_set &its = vol->mesh().its;
+    if (its.indices.empty())
+        return 0;
+    TriangleSelector selector(vol->mesh());
+    if (!ann->empty())
+        selector.deserialize(ann->get_data(), false);
+    for (int fi = 0; fi < int(its.indices.size()); ++fi)
+        selector.set_facet(fi, ebt);
+    ann->set(selector);
+    return int(its.indices.size());
+}
+
+void append_its_world(
+    const indexed_triangle_set &src,
+    const Transform3d &world,
+    std::vector<float> &pos,
+    std::vector<uint32_t> &idx)
+{
+    const uint32_t base = uint32_t(pos.size() / 3);
+    for (const Vec3f &v : src.vertices) {
+        const Vec3d w = world * v.cast<double>();
+        pos.push_back(float(w.x()));
+        pos.push_back(float(w.y()));
+        pos.push_back(float(w.z()));
+    }
+    for (const auto &f : src.indices) {
+        idx.push_back(base + uint32_t(f[0]));
+        idx.push_back(base + uint32_t(f[1]));
+        idx.push_back(base + uint32_t(f[2]));
+    }
+}
+
+int count_painted_on_volume(const ModelVolume *vol, int paint_kind, int state_filter)
+{
+    const FacetsAnnotation *ann = nullptr;
+    switch (paint_kind) {
+    case 0: ann = &vol->supported_facets; break;
+    case 1: ann = &vol->seam_facets; break;
+    case 2: ann = &vol->mmu_segmentation_facets; break;
+    case 3: ann = &vol->fuzzy_skin_facets; break;
+    default: return 0;
+    }
+    if (!ann || ann->empty())
+        return 0;
+    if (state_filter >= 0) {
+        return ann->has_facets(*vol, EnforcerBlockerType(state_filter))
+            ? int(ann->get_facets(*vol, EnforcerBlockerType(state_filter)).indices.size())
+            : 0;
+    }
+    // Any non-NONE: count ENFORCER..max
+    int total = 0;
+    const int max_s = (paint_kind == 2)
+        ? int(EnforcerBlockerType::ExtruderMax)
+        : 2;
+    for (int st = 1; st <= max_s; ++st) {
+        if (ann->has_facets(*vol, EnforcerBlockerType(st)))
+            total += int(ann->get_facets(*vol, EnforcerBlockerType(st)).indices.size());
+    }
+    return total;
+}
+
+} // namespace
+
+extern "C" {
+
+int orca_session_paint_at(
+    orca_session_t *s,
+    int object_index,
+    float x, float y, float z,
+    int paint_kind,
+    int state,
+    float radius_mm)
+{
+    if (!s || !s->has_model)
+        return -1;
+    if (paint_kind < 0 || paint_kind > 3 || !paint_state_valid(paint_kind, state)) {
+        s->set_error("paint_at: bad paint_kind/state");
+        return -2;
+    }
+    if (radius_mm < 0.f)
+        radius_mm = 0.f;
+    try {
+        const Vec3f hit(x, y, z);
+        const EnforcerBlockerType ebt = EnforcerBlockerType(state);
+        int total = 0;
+
+        auto paint_object = [&](ModelObject *obj) -> int {
+            if (!obj)
+                return 0;
+            int n = 0;
+            for (ModelVolume *vol : obj->volumes) {
+                if (!vol || !vol->is_model_part())
+                    continue;
+                const Transform3d world = volume_world_matrix(obj, vol);
+                n += paint_volume_near_point(vol, world, hit, radius_mm, paint_kind, ebt);
+            }
+            return n;
+        };
+
+        if (object_index >= 0) {
+            if (object_index >= int(s->model.objects.size())) {
+                s->set_error("paint_at: bad object index");
+                return -3;
+            }
+            total = paint_object(s->model.objects[size_t(object_index)]);
+        } else {
+            // Auto: paint only the object whose volume is closest to the hit
+            int best_obj = -1;
+            float best_d2 = std::numeric_limits<float>::max();
+            for (int oi = 0; oi < int(s->model.objects.size()); ++oi) {
+                ModelObject *obj = s->model.objects[size_t(oi)];
+                if (!obj)
+                    continue;
+                for (ModelVolume *vol : obj->volumes) {
+                    if (!vol || !vol->is_model_part())
+                        continue;
+                    const Transform3d world = volume_world_matrix(obj, vol);
+                    const indexed_triangle_set &its = vol->mesh().its;
+                    for (const auto &face : its.indices) {
+                        const Vec3f c =
+                            (its.vertices[size_t(face[0])]
+                             + its.vertices[size_t(face[1])]
+                             + its.vertices[size_t(face[2])])
+                            / 3.f;
+                        const Vec3f cw = (world * c.cast<double>()).cast<float>();
+                        const float d2 = (cw - hit).squaredNorm();
+                        if (d2 < best_d2) {
+                            best_d2 = d2;
+                            best_obj = oi;
+                        }
+                    }
+                }
+            }
+            if (best_obj >= 0)
+                total = paint_object(s->model.objects[size_t(best_obj)]);
+        }
+        return total;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("paint_at: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("paint_at: unknown error");
+        return -4;
+    }
+}
+
+int orca_session_paint_fill(
+    orca_session_t *s, int object_index, int paint_kind, int state)
+{
+    if (!s || !s->has_model || object_index < 0
+        || object_index >= int(s->model.objects.size()))
+        return -1;
+    if (paint_kind < 0 || paint_kind > 3 || !paint_state_valid(paint_kind, state)) {
+        s->set_error("paint_fill: bad paint_kind/state");
+        return -2;
+    }
+    try {
+        ModelObject *obj = s->model.objects[size_t(object_index)];
+        if (!obj)
+            return -3;
+        const EnforcerBlockerType ebt = EnforcerBlockerType(state);
+        int total = 0;
+        for (ModelVolume *vol : obj->volumes) {
+            if (!vol || !vol->is_model_part())
+                continue;
+            total += paint_volume_all(vol, paint_kind, ebt);
+        }
+        return total;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("paint_fill: ") + ex.what());
+        return -4;
+    }
+}
+
+int orca_session_paint_clear(
+    orca_session_t *s, int object_index, int paint_kind)
+{
+    if (!s || !s->has_model)
+        return -1;
+    if (paint_kind < 0 || paint_kind > 3) {
+        s->set_error("paint_clear: bad paint_kind");
+        return -2;
+    }
+    try {
+        auto clear_obj = [paint_kind](ModelObject *obj) {
+            if (!obj)
+                return;
+            for (ModelVolume *vol : obj->volumes) {
+                if (!vol)
+                    continue;
+                if (FacetsAnnotation *ann = paint_annotation_for(vol, paint_kind))
+                    ann->reset();
+            }
+        };
+        if (object_index < 0) {
+            for (ModelObject *obj : s->model.objects)
+                clear_obj(obj);
+        } else {
+            if (object_index >= int(s->model.objects.size()))
+                return -3;
+            clear_obj(s->model.objects[size_t(object_index)]);
+        }
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("paint_clear: ") + ex.what());
+        return -4;
+    }
+}
+
+int orca_session_paint_stats(
+    orca_session_t *s, int object_index, int paint_kind, int state,
+    int *painted_count)
+{
+    if (!s || !painted_count)
+        return -1;
+    *painted_count = 0;
+    if (!s->has_model)
+        return 0;
+    if (paint_kind < 0 || paint_kind > 3)
+        return -2;
+    try {
+        int total = 0;
+        auto acc = [&](ModelObject *obj) {
+            if (!obj)
+                return;
+            for (ModelVolume *vol : obj->volumes) {
+                if (!vol || !vol->is_model_part())
+                    continue;
+                total += count_painted_on_volume(vol, paint_kind, state);
+            }
+        };
+        if (object_index < 0) {
+            for (ModelObject *obj : s->model.objects)
+                acc(obj);
+        } else {
+            if (object_index >= int(s->model.objects.size()))
+                return -3;
+            acc(s->model.objects[size_t(object_index)]);
+        }
+        *painted_count = total;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("paint_stats: ") + ex.what());
+        return -4;
+    }
+}
+
+int orca_session_export_paint_mesh(
+    orca_session_t *s,
+    int object_index,
+    int paint_kind,
+    int state,
+    float **out_positions,
+    size_t *out_vertex_count,
+    uint32_t **out_indices,
+    size_t *out_index_count)
+{
+    if (!s || !out_positions || !out_vertex_count || !out_indices || !out_index_count)
+        return -1;
+    *out_positions = nullptr;
+    *out_indices = nullptr;
+    *out_vertex_count = 0;
+    *out_index_count = 0;
+    if (!s->has_model || paint_kind < 0 || paint_kind > 3)
+        return -2;
+    try {
+        std::vector<float> pos;
+        std::vector<uint32_t> idx;
+
+        auto export_obj = [&](ModelObject *obj) {
+            if (!obj)
+                return;
+            for (ModelVolume *vol : obj->volumes) {
+                if (!vol || !vol->is_model_part())
+                    continue;
+                FacetsAnnotation *ann = paint_annotation_for(vol, paint_kind);
+                if (!ann || ann->empty())
+                    continue;
+                const Transform3d world = volume_world_matrix(obj, vol);
+                if (state >= 0) {
+                    indexed_triangle_set its =
+                        ann->get_facets(*vol, EnforcerBlockerType(state));
+                    if (!its.indices.empty())
+                        append_its_world(its, world, pos, idx);
+                } else {
+                    const int max_s = (paint_kind == 2)
+                        ? int(EnforcerBlockerType::ExtruderMax)
+                        : 2;
+                    for (int st = 1; st <= max_s; ++st) {
+                        if (!ann->has_facets(*vol, EnforcerBlockerType(st)))
+                            continue;
+                        indexed_triangle_set its =
+                            ann->get_facets(*vol, EnforcerBlockerType(st));
+                        if (!its.indices.empty())
+                            append_its_world(its, world, pos, idx);
+                    }
+                }
+            }
+        };
+
+        if (object_index < 0) {
+            for (ModelObject *obj : s->model.objects)
+                export_obj(obj);
+        } else {
+            if (object_index >= int(s->model.objects.size()))
+                return -3;
+            export_obj(s->model.objects[size_t(object_index)]);
+        }
+
+        if (pos.empty())
+            return 0;
+
+        auto *p = static_cast<float *>(std::malloc(pos.size() * sizeof(float)));
+        auto *i = static_cast<uint32_t *>(std::malloc(idx.size() * sizeof(uint32_t)));
+        if (!p || !i) {
+            std::free(p);
+            std::free(i);
+            s->set_error("export_paint_mesh: oom");
+            return -4;
+        }
+        std::memcpy(p, pos.data(), pos.size() * sizeof(float));
+        std::memcpy(i, idx.data(), idx.size() * sizeof(uint32_t));
+        *out_positions = p;
+        *out_vertex_count = pos.size() / 3;
+        *out_indices = i;
+        *out_index_count = idx.size();
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("export_paint_mesh: ") + ex.what());
+        return -5;
+    } catch (...) {
+        s->set_error("export_paint_mesh: unknown error");
+        return -5;
+    }
 }
 
 const char *orca_session_last_error(orca_session_t *s)

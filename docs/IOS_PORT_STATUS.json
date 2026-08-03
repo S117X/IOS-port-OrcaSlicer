@@ -1,9 +1,9 @@
 {
   "status": "wx_parity_in_progress",
   "percent_estimate": 100,
-  "updated": "2026-08-03T14:30:00Z",
+  "updated": "2026-08-03T19:00:00Z",
   "branch": "ios-port",
-  "last_focus": "wx parity: undo/redo, object settings, gizmo modes, measure, prefs/about",
+  "last_focus": "wx W1 painters: support/seam/MMU/fuzzy FacetsAnnotation C API + Swift paint gizmos + SceneKit overlay",
   "gates": {
     "G1": true,
     "G2": true,
@@ -22,6 +22,6 @@
     "G15": true,
     "G16": true
   },
-  "notes": "wxWidgets not on iOS \u2014 SwiftUI parity. Added undo stack, object ModelConfig overrides, gizmo toolbar (select/move/rotate/scale/measure), Preferences/About. Remaining: paint gizmos W1, advanced mesh W2, config wizard W3, viewer polish W5.",
-  "wx_parity_percent": 55
+  "notes": "wxWidgets not on iOS — SwiftUI parity. W1 mostly done: paint_at/fill/clear/stats/export_paint_mesh via official TriangleSelector+FacetsAnnotation; Support/Seam/MMU/Fuzzy paint gizmos with brush, fill, clear, overlay. Remaining: brim ears (W1), advanced mesh W2, config wizard W3, viewer polish W5.",
+  "wx_parity_percent": 68
 }

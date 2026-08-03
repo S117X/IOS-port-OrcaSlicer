@@ -22,12 +22,20 @@ struct PlateSceneView: UIViewRepresentable {
     var moveMode: Bool = false
     /// Measure gizmo: tap places points in slic3r XYZ (mm).
     var measureMode: Bool = false
+    /// Paint gizmo: tap/drag paints facets via libslic3r FacetsAnnotation.
+    var paintMode: Bool = false
+    /// Painted facet overlay mesh (world slic3r coords)
+    var paintOverlay: MeshGeometry? = nil
+    /// Overlay color for current paint kind
+    var paintOverlayColor: UIColor = UIColor(red: 0.2, green: 0.85, blue: 0.35, alpha: 0.85)
     /// Called with total Δx, Δy mm when a drag ends (official translate_object).
     var onDragCommit: ((Float, Float) -> Void)? = nil
     /// Live visual feedback during drag (optional status text).
     var onDragLive: ((Float, Float) -> Void)? = nil
     /// Measure tap in slic3r coordinates (x,y,z mm).
     var onMeasurePick: ((SIMD3<Float>) -> Void)? = nil
+    /// Paint hit in slic3r XYZ mm (first stroke of a gesture sets recordUndo via parent).
+    var onPaintHit: ((SIMD3<Float>, Bool /*isBegin*/) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -57,13 +65,13 @@ struct PlateSceneView: UIViewRepresentable {
               let content = scene.rootNode.childNode(withName: "content", recursively: false)
         else { return }
 
-        // Move / measure mode: disable orbit so gestures own the surface
-        let wantCamera = !moveMode && !measureMode && !context.coordinator.isDragging
+        // Move / measure / paint: disable orbit so gestures own the surface
+        let wantCamera = !moveMode && !measureMode && !paintMode && !context.coordinator.isDragging
         if view.allowsCameraControl != wantCamera {
             view.allowsCameraControl = wantCamera
         }
-        context.coordinator.panGesture?.isEnabled = moveMode
-        context.coordinator.tapGesture?.isEnabled = measureMode
+        context.coordinator.panGesture?.isEnabled = moveMode || paintMode
+        context.coordinator.tapGesture?.isEnabled = measureMode || paintMode
 
         // Bed size / texture recreate if missing or changed
         let texKey = bedTexturePath ?? ""
@@ -113,6 +121,22 @@ struct PlateSceneView: UIViewRepresentable {
             content.childNode(withName: "model", recursively: false)?.opacity = 0.15
         } else {
             content.childNode(withName: "model", recursively: false)?.opacity = 1.0
+        }
+
+        // Paint overlay (support/seam/mmu/fuzzy facets)
+        content.childNode(withName: "paintOverlay", recursively: false)?.removeFromParentNode()
+        if let paintOverlay, paintOverlay.vertexCount > 0 {
+            let node = paintOverlay.makeNode(color: paintOverlayColor)
+            node.name = "paintOverlay"
+            // Slight inflate so painted faces sit above base mesh
+            node.renderingOrder = 10
+            if let mats = node.geometry?.materials {
+                for m in mats {
+                    m.writesToDepthBuffer = false
+                    m.transparencyMode = .singleLayer
+                }
+            }
+            content.addChildNode(node)
         }
     }
 
@@ -325,6 +349,8 @@ struct PlateSceneView: UIViewRepresentable {
         var visualOffset: SIMD2<Float> = .zero
         private var dragStartBedXY: SIMD2<Float>?
         private var lastBedXY: SIMD2<Float>?
+        private var paintStrokeActive = false
+        private var lastPaintScreen: CGPoint?
 
         func installGestures(on view: SCNView) {
             if panGesture == nil {
@@ -342,18 +368,37 @@ struct PlateSceneView: UIViewRepresentable {
             }
         }
 
-        @objc private func handleTap(_ gr: UITapGestureRecognizer) {
-            guard let view = view, let parent = parent, parent.measureMode else { return }
-            let screen = gr.location(in: view)
-            // Hit-test mesh first for true Z; fall back to bed plane Z=0
+        /// SceneKit world → slic3r XYZ under content R_x(-90°)
+        private func slic3rFromWorld(_ w: SCNVector3) -> SIMD3<Float> {
+            SIMD3<Float>(w.x, -w.z, w.y)
+        }
+
+        private func hitModelSlic3r(view: SCNView, screen: CGPoint) -> SIMD3<Float>? {
             let hits = view.hitTest(screen, options: [
                 SCNHitTestOption.searchMode: SCNHitTestSearchMode.all.rawValue
             ])
-            if let h = hits.first(where: { $0.node.name == "model" || $0.node.parent?.name == "model" }) {
-                // World hit → slic3r under content R_x(-90): world (x,y,z) = content (x,z,-y)
-                // inverse: content_x = world_x, content_y = -world_z, content_z = world_y
-                let w = h.worldCoordinates
-                let p = SIMD3<Float>(w.x, -w.z, w.y)
+            if let h = hits.first(where: {
+                let n = $0.node.name
+                let p = $0.node.parent?.name
+                return n == "model" || p == "model" || n == "paintOverlay" || p == "paintOverlay"
+            }) {
+                return slic3rFromWorld(h.worldCoordinates)
+            }
+            return nil
+        }
+
+        @objc private func handleTap(_ gr: UITapGestureRecognizer) {
+            guard let view = view, let parent = parent else { return }
+            let screen = gr.location(in: view)
+            if parent.paintMode {
+                if let p = hitModelSlic3r(view: view, screen: screen) {
+                    parent.onPaintHit?(p, true)
+                }
+                return
+            }
+            guard parent.measureMode else { return }
+            // Hit-test mesh first for true Z; fall back to bed plane Z=0
+            if let p = hitModelSlic3r(view: view, screen: screen) {
                 parent.onMeasurePick?(p)
                 return
             }
@@ -363,8 +408,42 @@ struct PlateSceneView: UIViewRepresentable {
         }
 
         @objc private func handlePan(_ gr: UIPanGestureRecognizer) {
-            guard let view = view, let parent = parent, parent.moveMode else { return }
+            guard let view = view, let parent = parent else { return }
             let pt = gr.location(in: view)
+
+            // Paint brush stroke
+            if parent.paintMode {
+                switch gr.state {
+                case .began:
+                    isDragging = true
+                    paintStrokeActive = true
+                    view.allowsCameraControl = false
+                    lastPaintScreen = pt
+                    if let p = hitModelSlic3r(view: view, screen: pt) {
+                        parent.onPaintHit?(p, true)
+                    }
+                case .changed:
+                    // Throttle by screen distance to avoid flooding
+                    if let last = lastPaintScreen {
+                        let dx = pt.x - last.x, dy = pt.y - last.y
+                        if dx * dx + dy * dy < 36 { return } // ~6pt
+                    }
+                    lastPaintScreen = pt
+                    if let p = hitModelSlic3r(view: view, screen: pt) {
+                        parent.onPaintHit?(p, false)
+                    }
+                case .ended, .cancelled, .failed:
+                    isDragging = false
+                    paintStrokeActive = false
+                    lastPaintScreen = nil
+                    view.allowsCameraControl = false
+                default:
+                    break
+                }
+                return
+            }
+
+            guard parent.moveMode else { return }
 
             switch gr.state {
             case .began:

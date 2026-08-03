@@ -27,17 +27,18 @@ Status file: `docs/IOS_PORT_STATUS.json` field `wx_parity_percent`.
 | Preferences / About | Sheets (ellipsis menu) |
 | Measure gizmo | Measure mode + tap pick |
 | Move / Rotate / Scale gizmos | Gizmo modes + chips |
+| Support / seam / MMU / fuzzy paint | FacetsAnnotation via C API + paint gizmos |
 
 ---
 
 ## Remaining for full wx-parity (watcher continues)
 
 ### W1 — Painter gizmos (high effort)
-- [ ] Support painting (`GLGizmoFdmSupports`)
-- [ ] Seam painting
-- [ ] Multi-material / color painting (`GLGizmoMmuSegmentation`)
-- [ ] Brim ears paint
-- [ ] Fuzzy skin paint
+- [x] Support painting (`GLGizmoFdmSupports`) — `orca_session_paint_*` + Support paint gizmo
+- [x] Seam painting — Seam paint gizmo → `seam_facets`
+- [x] Multi-material / color painting (`GLGizmoMmuSegmentation`) — MMU paint gizmo → `mmu_segmentation_facets`
+- [ ] Brim ears paint (point markers, not triangle facets — still open)
+- [x] Fuzzy skin paint — Fuzzy paint gizmo → `fuzzy_skin_facets`
 
 ### W2 — Advanced mesh tools
 - [ ] Advanced cut (non-horizontal planes, connectors)

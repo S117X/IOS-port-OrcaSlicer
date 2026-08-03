@@ -80,6 +80,12 @@ final class OrcaEngine: ObservableObject {
     @Published var calibSummary: String = ""
     /// Last mesh health report (open edges / manifold)
     @Published var meshHealthText: String = ""
+    /// Painted facet overlay (support/seam/mmu/fuzzy) for SceneKit
+    @Published var paintOverlayMesh: MeshGeometry?
+    /// Facets painted in last brush stroke / fill
+    @Published var lastPaintCount: Int = 0
+    /// Running total for active paint kind (any non-NONE)
+    @Published var paintStatsText: String = ""
 
     private let prefsPrinterKey = "orca.lastPrinter"
     private let prefsProcessKey = "orca.lastProcess"
@@ -1920,5 +1926,163 @@ final class OrcaEngine: ObservableObject {
             ? "Object \(index + 1) → extruder \(extruder1Based)"
             : (orca_session_last_error(s).map { String(cString: $0) } ?? "extruder failed")
         #endif
+    }
+
+    // MARK: - wx-parity W1: facet painting (support / seam / MMU / fuzzy)
+
+    /// paint_kind mirrors C API: 0 support, 1 seam, 2 mmu, 3 fuzzy
+    enum PaintKind: Int, CaseIterable {
+        case support = 0
+        case seam = 1
+        case mmu = 2
+        case fuzzy = 3
+
+        var label: String {
+            switch self {
+            case .support: return "Support"
+            case .seam: return "Seam"
+            case .mmu: return "MMU"
+            case .fuzzy: return "Fuzzy"
+            }
+        }
+    }
+
+    /// Brush at world hit (slic3r mm). state: 0 erase, 1 enforce/extruder1/fuzzy, 2 block (support/seam).
+    @discardableResult
+    func paintAt(
+        x: Float, y: Float, z: Float,
+        kind: PaintKind,
+        state: Int,
+        radiusMm: Float,
+        recordUndo: Bool = false
+    ) -> Int {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return -1 }
+        if recordUndo { pushUndoSnapshot(label: "paint-\(kind.label)") }
+        let objIdx = selectedObjectIndex >= 0 ? Int32(selectedObjectIndex) : Int32(-1)
+        let n = orca_session_paint_at(
+            s, objIdx, x, y, z, Int32(kind.rawValue), Int32(state), radiusMm
+        )
+        lastPaintCount = max(0, Int(n))
+        if n >= 0 {
+            refreshPaintOverlay(kind: kind)
+            refreshPaintStats(kind: kind)
+            lastMessage = n > 0
+                ? "Painted \(n) facet(s) · \(kind.label)"
+                : "No facet near brush · \(kind.label)"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "paint failed"
+        }
+        return Int(n)
+        #else
+        return -1
+        #endif
+    }
+
+    @discardableResult
+    func paintFill(kind: PaintKind, state: Int) -> Int {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return -1 }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        pushUndoSnapshot(label: "paint-fill-\(kind.label)")
+        let n = orca_session_paint_fill(s, Int32(idx), Int32(kind.rawValue), Int32(state))
+        lastPaintCount = max(0, Int(n))
+        if n >= 0 {
+            refreshPaintOverlay(kind: kind)
+            refreshPaintStats(kind: kind)
+            lastMessage = "Fill \(kind.label) · \(n) facets"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "paint fill failed"
+        }
+        return Int(n)
+        #else
+        return -1
+        #endif
+    }
+
+    @discardableResult
+    func paintClear(kind: PaintKind, allObjects: Bool = false) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return false }
+        pushUndoSnapshot(label: "paint-clear-\(kind.label)")
+        let idx: Int32 = allObjects
+            ? -1
+            : Int32(selectedObjectIndex >= 0 ? selectedObjectIndex : 0)
+        let rc = orca_session_paint_clear(s, idx, Int32(kind.rawValue))
+        if rc == 0 {
+            refreshPaintOverlay(kind: kind)
+            refreshPaintStats(kind: kind)
+            lastMessage = "Cleared \(kind.label) paint"
+            return true
+        }
+        lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "paint clear failed"
+        return false
+        #else
+        return false
+        #endif
+    }
+
+    func refreshPaintStats(kind: PaintKind) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else {
+            paintStatsText = ""
+            return
+        }
+        let idx = selectedObjectIndex >= 0 ? Int32(selectedObjectIndex) : Int32(-1)
+        var count: Int32 = 0
+        let rc = orca_session_paint_stats(s, idx, Int32(kind.rawValue), -1, &count)
+        if rc == 0 {
+            paintStatsText = "\(kind.label) · \(count) painted facet(s)"
+        } else {
+            paintStatsText = ""
+        }
+        #endif
+    }
+
+    /// Load world-space painted facets for SceneKit overlay (any non-NONE state).
+    func refreshPaintOverlay(kind: PaintKind?) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel, let kind else {
+            paintOverlayMesh = nil
+            return
+        }
+        let idx = selectedObjectIndex >= 0 ? Int32(selectedObjectIndex) : Int32(-1)
+        var posPtr: UnsafeMutablePointer<Float>?
+        var idxPtr: UnsafeMutablePointer<UInt32>?
+        var vcount: Int = 0
+        var icount: Int = 0
+        let rc = orca_session_export_paint_mesh(
+            s, idx, Int32(kind.rawValue), -1,
+            &posPtr, &vcount, &idxPtr, &icount
+        )
+        defer {
+            if let p = posPtr { orca_free(p) }
+            if let i = idxPtr { orca_free(i) }
+        }
+        guard rc == 0, let posPtr, let idxPtr, vcount > 0, icount > 0 else {
+            paintOverlayMesh = nil
+            return
+        }
+        var positions = [Float](repeating: 0, count: vcount * 3)
+        var indices = [UInt32](repeating: 0, count: icount)
+        for i in 0..<(vcount * 3) { positions[i] = posPtr[i] }
+        for i in 0..<icount { indices[i] = idxPtr[i] }
+        var bmin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var bmax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        for i in 0..<vcount {
+            let p = SIMD3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])
+            bmin = min(bmin, p)
+            bmax = max(bmax, p)
+        }
+        paintOverlayMesh = MeshGeometry(positions: positions, indices: indices, min: bmin, max: bmax)
+        #else
+        paintOverlayMesh = nil
+        #endif
+    }
+
+    func clearPaintOverlay() {
+        paintOverlayMesh = nil
+        paintStatsText = ""
+        lastPaintCount = 0
     }
 }
