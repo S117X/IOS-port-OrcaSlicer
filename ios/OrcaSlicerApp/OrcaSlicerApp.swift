@@ -218,7 +218,15 @@ struct OrcaRootView: View {
         }
     }
 
+    enum PrinterHostType: String, CaseIterable, Identifiable {
+        case moonraker = "Moonraker"
+        case octoprint = "OctoPrint"
+        var id: String { rawValue }
+    }
+
+    @State private var hostType: PrinterHostType = .moonraker
     @State private var printerHost = "http://192.168.1.100"
+    @State private var octoApiKey = ""
     @State private var printerStatus = "Not connected"
     @State private var isConnecting = false
     @State private var isJobBusy = false
@@ -248,11 +256,28 @@ struct OrcaRootView: View {
                     Spacer()
                 }
 
+                Picker("Host type", selection: $hostType) {
+                    ForEach(PrinterHostType.allCases) { t in
+                        Text(t.rawValue).tag(t)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: hostType) { _ in
+                    printerStatus = "Not connected"
+                    jobState = ""
+                    jobMessage = ""
+                    lastUploadedFilename = nil
+                    statusPollTask?.cancel()
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Moonraker / Klipper host")
+                    Text(hostType == .moonraker ? "Moonraker / Klipper host" : "OctoPrint host")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(OrcaTheme.muted)
-                    TextField("http://printer.local", text: $printerHost)
+                    TextField(
+                        hostType == .moonraker ? "http://printer.local" : "http://octopi.local",
+                        text: $printerHost
+                    )
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -261,11 +286,21 @@ struct OrcaRootView: View {
                         .padding(12)
                         .background(OrcaTheme.elevated)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    if hostType == .octoprint {
+                        SecureField("API key (OctoPrint)", text: $octoApiKey)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.system(size: 14, design: .monospaced))
+                            .foregroundStyle(OrcaTheme.text)
+                            .padding(12)
+                            .background(OrcaTheme.elevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
                 }
 
                 HStack(spacing: 10) {
                     Button {
-                        Task { await connectMoonraker() }
+                        Task { await connectPrinterHost() }
                     } label: {
                         HStack {
                             if isConnecting { ProgressView().tint(.white) }
@@ -282,7 +317,7 @@ struct OrcaRootView: View {
                     .buttonStyle(.plain)
 
                     Button {
-                        Task { await uploadGCodeToMoonraker() }
+                        Task { await uploadGCodeToHost() }
                     } label: {
                         Text("Upload G-code")
                             .fontWeight(.bold)
@@ -296,7 +331,7 @@ struct OrcaRootView: View {
                     .buttonStyle(.plain)
                 }
 
-                // Start / status / cancel (Moonraker print API)
+                // Start / status / cancel
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Job")
                         .font(.system(size: 12, weight: .semibold))
@@ -325,7 +360,7 @@ struct OrcaRootView: View {
                     }
                     HStack(spacing: 10) {
                         Button {
-                            Task { await startMoonrakerPrint() }
+                            Task { await startHostPrint() }
                         } label: {
                             HStack {
                                 if isJobBusy { ProgressView().tint(.white) }
@@ -342,7 +377,7 @@ struct OrcaRootView: View {
                         .buttonStyle(.plain)
 
                         Button {
-                            Task { await cancelMoonrakerPrint() }
+                            Task { await cancelHostPrint() }
                         } label: {
                             Text("Cancel")
                                 .fontWeight(.bold)
@@ -356,7 +391,7 @@ struct OrcaRootView: View {
                         .buttonStyle(.plain)
 
                         Button {
-                            Task { await refreshMoonrakerJobStatus() }
+                            Task { await refreshHostJobStatus() }
                         } label: {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 16, weight: .semibold))
@@ -420,10 +455,58 @@ struct OrcaRootView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private func printerBaseURL() -> URL? {
+        URL(string: printerHost.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private func moonrakerBaseURL() -> URL? { printerBaseURL() }
+
+    private func connectPrinterHost() async {
+        switch hostType {
+        case .moonraker: await connectMoonraker()
+        case .octoprint: await connectOctoPrint()
+        }
+    }
+
+    private func uploadGCodeToHost() async {
+        switch hostType {
+        case .moonraker: await uploadGCodeToMoonraker()
+        case .octoprint: await uploadGCodeToOctoPrint()
+        }
+    }
+
+    private func startHostPrint() async {
+        switch hostType {
+        case .moonraker: await startMoonrakerPrint()
+        case .octoprint: await startOctoPrint()
+        }
+    }
+
+    private func cancelHostPrint() async {
+        switch hostType {
+        case .moonraker: await cancelMoonrakerPrint()
+        case .octoprint: await cancelOctoPrint()
+        }
+    }
+
+    private func refreshHostJobStatus() async {
+        switch hostType {
+        case .moonraker: await refreshMoonrakerJobStatus()
+        case .octoprint: await refreshOctoPrintJobStatus()
+        }
+    }
+
+    private func octoHeaders(for req: inout URLRequest) {
+        let key = octoApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty {
+            req.setValue(key, forHTTPHeaderField: "X-Api-Key")
+        }
+    }
+
     private func connectMoonraker() async {
         isConnecting = true
         defer { isConnecting = false }
-        guard let base = URL(string: printerHost.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        guard let base = printerBaseURL() else {
             printerStatus = "Invalid URL"
             return
         }
@@ -439,9 +522,9 @@ struct OrcaRootView: View {
                     let ver = result["klippy_state"] as? String
                         ?? result["moonraker_version"] as? String
                         ?? "ok"
-                    printerStatus = "Connected · \(ver)"
+                    printerStatus = "Moonraker · \(ver)"
                 } else {
-                    printerStatus = "Connected (HTTP \(code))"
+                    printerStatus = "Moonraker connected (HTTP \(code))"
                 }
             } else {
                 printerStatus = "HTTP \(code) from server.info"
@@ -451,8 +534,37 @@ struct OrcaRootView: View {
         }
     }
 
-    private func moonrakerBaseURL() -> URL? {
-        URL(string: printerHost.trimmingCharacters(in: .whitespacesAndNewlines))
+    /// GET /api/version — OctoPrint handshake
+    private func connectOctoPrint() async {
+        isConnecting = true
+        defer { isConnecting = false }
+        guard let base = printerBaseURL() else {
+            printerStatus = "Invalid URL"
+            return
+        }
+        var req = URLRequest(url: base.appendingPathComponent("api/version"))
+        req.timeoutInterval = 5
+        octoHeaders(for: &req)
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 200 {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    let ver = (json["server"] as? String)
+                        ?? (json["api"] as? String)
+                        ?? "ok"
+                    printerStatus = "OctoPrint · \(ver)"
+                } else {
+                    printerStatus = "OctoPrint connected"
+                }
+            } else if code == 403 {
+                printerStatus = "OctoPrint 403 — check API key"
+            } else {
+                printerStatus = "OctoPrint HTTP \(code)"
+            }
+        } catch {
+            printerStatus = "Unreachable: \(error.localizedDescription)"
+        }
     }
 
     private func uploadGCodeToMoonraker() async {
@@ -643,12 +755,187 @@ struct OrcaRootView: View {
         statusPollTask = Task {
             for _ in 0..<120 { // ~10 min at 5s
                 if Task.isCancelled { return }
-                await refreshMoonrakerJobStatus()
-                let done = ["complete", "cancelled", "error", "standby", "ready"]
-                    .contains(jobState.lowercased())
+                await refreshHostJobStatus()
+                let s = jobState.lowercased()
+                let done = [
+                    "complete", "completed", "cancelled", "canceled",
+                    "error", "standby", "ready", "operational", "offline"
+                ].contains(s)
                 if done { return }
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
             }
+        }
+    }
+
+    // MARK: OctoPrint REST
+
+    /// POST /api/files/local multipart upload
+    private func uploadGCodeToOctoPrint() async {
+        guard let gcode = engine.gcodeURL else {
+            printerStatus = "Slice first to produce G-code"
+            return
+        }
+        guard let base = printerBaseURL() else {
+            printerStatus = "Invalid host URL"
+            return
+        }
+        isConnecting = true
+        defer { isConnecting = false }
+        let uploadURL = base.appendingPathComponent("api/files/local")
+        let boundary = "OrcaBoundary\(UUID().uuidString)"
+        var req = URLRequest(url: uploadURL)
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        octoHeaders(for: &req)
+        req.timeoutInterval = 90
+        guard let fileData = try? Data(contentsOf: gcode) else {
+            printerStatus = "Could not read G-code file"
+            return
+        }
+        let filename = gcode.lastPathComponent
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n"
+                .data(using: .utf8)!
+        )
+        body.append("Content-Type: application/octet-stream\r\n\r\n".data(using: .utf8)!)
+        body.append(fileData)
+        body.append("\r\n--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"select\"\r\n\r\n".data(using: .utf8)!)
+        body.append("true\r\n".data(using: .utf8)!)
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        req.httpBody = body
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if (200...299).contains(code) {
+                var remoteName = filename
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let files = json["files"] as? [String: Any],
+                   let local = files["local"] as? [String: Any],
+                   let name = local["name"] as? String {
+                    remoteName = name
+                }
+                lastUploadedFilename = remoteName
+                printerStatus = "OctoPrint uploaded \(remoteName)"
+                jobMessage = "Upload OK — Start print when ready"
+            } else if code == 403 {
+                printerStatus = "Upload 403 — check API key"
+            } else {
+                printerStatus = "OctoPrint upload HTTP \(code)"
+            }
+        } catch {
+            printerStatus = "Upload error: \(error.localizedDescription)"
+        }
+    }
+
+    /// POST /api/job { "command": "start" } — file must be selected
+    private func startOctoPrint() async {
+        guard let base = printerBaseURL() else {
+            printerStatus = "Invalid host URL"
+            return
+        }
+        if lastUploadedFilename == nil, engine.gcodeURL != nil {
+            await uploadGCodeToOctoPrint()
+        }
+        guard lastUploadedFilename != nil || engine.gcodeURL != nil else {
+            printerStatus = "Upload G-code first"
+            return
+        }
+        isJobBusy = true
+        defer { isJobBusy = false }
+        var req = URLRequest(url: base.appendingPathComponent("api/job"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        octoHeaders(for: &req)
+        req.timeoutInterval = 15
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["command": "start"])
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if (200...299).contains(code) {
+                jobState = "Printing"
+                jobProgress = 0
+                jobMessage = lastUploadedFilename ?? "job"
+                printerStatus = "OctoPrint print started"
+                startJobStatusPolling()
+            } else {
+                let errBody = String(data: data, encoding: .utf8) ?? ""
+                printerStatus = "Start failed HTTP \(code)"
+                jobMessage = errBody.isEmpty ? "HTTP \(code)" : String(errBody.prefix(160))
+            }
+        } catch {
+            printerStatus = "Start error: \(error.localizedDescription)"
+        }
+    }
+
+    /// POST /api/job { "command": "cancel" }
+    private func cancelOctoPrint() async {
+        guard let base = printerBaseURL() else {
+            printerStatus = "Invalid host URL"
+            return
+        }
+        isJobBusy = true
+        defer { isJobBusy = false }
+        var req = URLRequest(url: base.appendingPathComponent("api/job"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        octoHeaders(for: &req)
+        req.timeoutInterval = 10
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["command": "cancel"])
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if (200...299).contains(code) {
+                jobState = "cancelled"
+                jobMessage = "Print cancelled"
+                printerStatus = "OctoPrint cancelled"
+                statusPollTask?.cancel()
+                statusPollTask = nil
+            } else {
+                printerStatus = "Cancel failed HTTP \(code)"
+            }
+        } catch {
+            printerStatus = "Cancel error: \(error.localizedDescription)"
+        }
+    }
+
+    /// GET /api/job
+    private func refreshOctoPrintJobStatus() async {
+        guard let base = printerBaseURL() else { return }
+        var req = URLRequest(url: base.appendingPathComponent("api/job"))
+        req.timeoutInterval = 8
+        octoHeaders(for: &req)
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200...299).contains(code),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else {
+                if code != 0 { jobMessage = "Status HTTP \(code)" }
+                return
+            }
+            if let state = json["state"] as? String, !state.isEmpty {
+                jobState = state
+            }
+            if let progress = json["progress"] as? [String: Any] {
+                if let completion = progress["completion"] as? Double {
+                    jobProgress = completion / 100.0
+                } else if let completion = progress["completion"] as? Int {
+                    jobProgress = Double(completion) / 100.0
+                }
+            }
+            if let job = json["job"] as? [String: Any],
+               let file = job["file"] as? [String: Any],
+               let name = file["name"] as? String {
+                jobMessage = name
+            }
+            if !jobState.isEmpty {
+                printerStatus = "Octo · \(jobState) · \(String(format: "%.0f%%", jobProgress * 100))"
+            }
+        } catch {
+            jobMessage = error.localizedDescription
         }
     }
 

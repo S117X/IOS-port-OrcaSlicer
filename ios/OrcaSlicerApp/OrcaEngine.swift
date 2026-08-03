@@ -972,7 +972,14 @@ final class OrcaEngine: ObservableObject {
             } else {
                 self.lastSliceStatsText = ""
             }
-            if let path = GCodePathGeometry.parse(url: out) {
+            // Default ribbon width from official line_width / nozzle_diameter
+            var defW: Float = 0.45
+            if let lw = self.getOptionFirst("line_width").flatMap(Float.init), lw > 0.05 {
+                defW = lw
+            } else if let nd = self.getOptionFirst("nozzle_diameter").flatMap(Float.init), nd > 0.05 {
+                defW = nd * 1.1
+            }
+            if let path = GCodePathGeometry.parse(url: out, defaultWidth: defW) {
                 self.gcodeGeometry = path
                 self.gcodeZMin = path.zMin
                 self.gcodeZMax = max(path.zMax, path.zMin + 0.2)

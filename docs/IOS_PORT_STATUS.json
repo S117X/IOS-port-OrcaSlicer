@@ -1,17 +1,17 @@
 {
   "status": "in_progress",
-  "updated": "2026-08-03T00:10:00Z",
+  "updated": "2026-08-03T00:30:00Z",
   "branch": "ios-port",
-  "last_focus": "G4 free drag + multi-plate slots; G5 feature-type toggles",
+  "last_focus": "G5 WIDTH ribbon paths + G6 OctoPrint host",
   "gates": {
     "G1_engine_build": true,
     "G2_profiles": false,
     "G3_process_ui": true,
     "G4_prepare_objects": true,
-    "G5_preview": false,
-    "G6_device": false,
+    "G5_preview": true,
+    "G6_device": true,
     "G7_project": true,
     "G8_quality": false
   },
-  "notes": "G4 done: Drag mode bed-plane pan → translate_object; multi-plate via 3MF slots. G5 feature toggles (wall/infill/support/travel/other) + travel moves in parse. Remaining: G5 better path fidelity, G6 OctoPrint, G2 compatible filter + user presets, G8 quality."
+  "notes": "G5: parse official ;WIDTH: comments, ribbon extrusion meshes, travel as lines. G6: Moonraker|OctoPrint host picker, OctoPrint API key, upload/start/cancel/job status. Remaining: G2 compatible process/filament filter + user presets; G8 quality (first-run profiles, memory, errors, docs)."
 }

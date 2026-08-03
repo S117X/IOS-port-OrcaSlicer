@@ -555,24 +555,30 @@ struct GCodePathGeometry {
     struct Segment {
         var points: [SCNVector3]
         var feature: String
+        /// Extrusion width mm from official `;WIDTH:` comments (0 = travel / unknown)
+        var width: Float
     }
     var segments: [Segment]
     var zMin: Float = 0
     var zMax: Float = 0
+    /// Default line width when WIDTH comment missing (from nozzle / line_width)
+    var defaultWidth: Float = 0.45
 
-    static func parse(url: URL, maxPoints: Int = 120_000) -> GCodePathGeometry? {
+    static func parse(url: URL, maxPoints: Int = 120_000, defaultWidth: Float = 0.45) -> GCodePathGeometry? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         var x: Float = 0, y: Float = 0, z: Float = 0
         var feature = "Unknown"
+        var width = defaultWidth
         var segs: [Segment] = []
         var cur: [SCNVector3] = []
+        var curWidth = defaultWidth
         var zMin: Float = .greatestFiniteMagnitude
         var zMax: Float = -.greatestFiniteMagnitude
         var total = 0
 
         func flush() {
             if cur.count > 1 {
-                segs.append(Segment(points: cur, feature: feature))
+                segs.append(Segment(points: cur, feature: feature, width: curWidth))
             }
             cur = []
         }
@@ -583,6 +589,20 @@ struct GCodePathGeometry {
             if s.hasPrefix(";TYPE:") || s.hasPrefix(";TYPE :") {
                 flush()
                 feature = String(s.dropFirst(6).trimmingCharacters(in: .whitespaces))
+                continue
+            }
+            // Official Orca comment: ;WIDTH:0.45
+            if s.hasPrefix(";WIDTH:") || s.hasPrefix(";WIDTH :") {
+                let raw = s.drop(while: { $0 != ":" }).dropFirst()
+                    .trimmingCharacters(in: .whitespaces)
+                if let w = Float(raw), w > 0.05, w < 5 {
+                    width = w
+                    curWidth = w
+                }
+                continue
+            }
+            // ;HEIGHT: for layer height awareness (optional)
+            if s.hasPrefix(";HEIGHT:") || s.hasPrefix(";HEIGHT :") {
                 continue
             }
             guard s.hasPrefix("G0") || s.hasPrefix("G1") || s.hasPrefix("g0") || s.hasPrefix("g1") else { continue }
@@ -597,8 +617,11 @@ struct GCodePathGeometry {
                 }
             }
             if hasE {
-                // Extrusion → keep current ;TYPE: feature
-                if cur.isEmpty { cur.append(SCNVector3(x, y, z)) }
+                // Extrusion → keep current ;TYPE: / ;WIDTH:
+                if cur.isEmpty {
+                    cur.append(SCNVector3(x, y, z))
+                    curWidth = width
+                }
                 cur.append(SCNVector3(nx, ny, nz))
                 zMin = min(zMin, nz)
                 zMax = max(zMax, nz)
@@ -608,13 +631,11 @@ struct GCodePathGeometry {
                 let moved = abs(nx - x) > 0.01 || abs(ny - y) > 0.01 || abs(nz - z) > 0.01
                 if moved {
                     flush()
-                    let prevFeature = feature
-                    feature = "Travel"
                     segs.append(Segment(
                         points: [SCNVector3(x, y, z), SCNVector3(nx, ny, nz)],
-                        feature: "Travel"
+                        feature: "Travel",
+                        width: 0
                     ))
-                    feature = prevFeature
                     zMin = min(zMin, nz, z)
                     zMax = max(zMax, nz, z)
                     total += 1
@@ -627,7 +648,9 @@ struct GCodePathGeometry {
         flush()
         guard !segs.isEmpty else { return nil }
         if zMin > zMax { zMin = 0; zMax = 0.2 }
-        return GCodePathGeometry(segments: segs, zMin: zMin, zMax: zMax)
+        return GCodePathGeometry(
+            segments: segs, zMin: zMin, zMax: zMax, defaultWidth: defaultWidth
+        )
     }
 
     /// Feature group used by preview toggles (wall / infill / support / travel / other).
@@ -680,10 +703,12 @@ struct GCodePathGeometry {
             }
             let pts = seg.points.filter { $0.z <= maxZ + 0.001 }
             if pts.count > 1 {
-                out.append(Segment(points: pts, feature: seg.feature))
+                out.append(Segment(points: pts, feature: seg.feature, width: seg.width))
             }
         }
-        return GCodePathGeometry(segments: out, zMin: zMin, zMax: maxZ)
+        return GCodePathGeometry(
+            segments: out, zMin: zMin, zMax: maxZ, defaultWidth: defaultWidth
+        )
     }
 
     static func color(for feature: String) -> UIColor {
@@ -719,31 +744,130 @@ struct GCodePathGeometry {
     }
 
     /// Parent "content" applies Z-up → Y-up; do not rotate this node.
+    /// Extrusions: ribbon quads at official `;WIDTH:` (fallback defaultWidth).
+    /// Travel: thin line.
     func makeNode(color: UIColor) -> SCNNode {
         let root = SCNNode()
         root.name = "gcode"
         for seg in segments {
             guard seg.points.count > 1 else { continue }
-            let src = SCNGeometrySource(vertices: seg.points)
-            var indices: [Int32] = []
-            for i in 0..<(seg.points.count - 1) {
-                indices.append(Int32(i))
-                indices.append(Int32(i + 1))
+            let isTravel = Self.group(for: seg.feature) == .travel || seg.width <= 0.01
+            if isTravel {
+                root.addChildNode(makeLineNode(points: seg.points, color: Self.color(for: seg.feature)))
+            } else {
+                let w = seg.width > 0.05 ? seg.width : defaultWidth
+                if let ribbon = makeRibbonNode(points: seg.points, width: w, color: Self.color(for: seg.feature)) {
+                    root.addChildNode(ribbon)
+                } else {
+                    root.addChildNode(makeLineNode(points: seg.points, color: Self.color(for: seg.feature)))
+                }
             }
-            let data = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-            let elem = SCNGeometryElement(
-                data: data,
-                primitiveType: .line,
-                primitiveCount: indices.count / 2,
-                bytesPerIndex: MemoryLayout<Int32>.size
-            )
-            let geo = SCNGeometry(sources: [src], elements: [elem])
-            let mat = SCNMaterial()
-            mat.diffuse.contents = Self.color(for: seg.feature)
-            mat.lightingModel = .constant
-            geo.materials = [mat]
-            root.addChildNode(SCNNode(geometry: geo))
         }
         return root
+    }
+
+    private func makeLineNode(points: [SCNVector3], color: UIColor) -> SCNNode {
+        let src = SCNGeometrySource(vertices: points)
+        var indices: [Int32] = []
+        for i in 0..<(points.count - 1) {
+            indices.append(Int32(i))
+            indices.append(Int32(i + 1))
+        }
+        let data = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+        let elem = SCNGeometryElement(
+            data: data,
+            primitiveType: .line,
+            primitiveCount: indices.count / 2,
+            bytesPerIndex: MemoryLayout<Int32>.size
+        )
+        let geo = SCNGeometry(sources: [src], elements: [elem])
+        let mat = SCNMaterial()
+        mat.diffuse.contents = color
+        mat.lightingModel = .constant
+        geo.materials = [mat]
+        return SCNNode(geometry: geo)
+    }
+
+    /// Flat ribbon in XY (slic3r bed plane) extruded ±half-width perpendicular to path.
+    private func makeRibbonNode(points: [SCNVector3], width: Float, color: UIColor) -> SCNNode? {
+        let n = points.count
+        guard n >= 2 else { return nil }
+        let half = max(width, 0.12) * 0.5
+        // Cap segment density for large paths
+        let stride = max(1, n / 4000)
+        var sampled: [SCNVector3] = []
+        var i = 0
+        while i < n {
+            sampled.append(points[i])
+            i += stride
+        }
+        if sampled.last.map({ $0.x != points[n - 1].x || $0.y != points[n - 1].y || $0.z != points[n - 1].z }) ?? true {
+            sampled.append(points[n - 1])
+        }
+        let m = sampled.count
+        guard m >= 2 else { return nil }
+
+        var verts: [SCNVector3] = []
+        verts.reserveCapacity(m * 2)
+        for j in 0..<m {
+            let p = sampled[j]
+            // Tangent from neighbors
+            let prev = sampled[max(0, j - 1)]
+            let next = sampled[min(m - 1, j + 1)]
+            var tx = next.x - prev.x
+            var ty = next.y - prev.y
+            let len = max(sqrtf(tx * tx + ty * ty), 1e-4)
+            tx /= len; ty /= len
+            // Perpendicular in XY
+            let px = -ty * half
+            let py = tx * half
+            verts.append(SCNVector3(p.x + px, p.y + py, p.z + 0.02))
+            verts.append(SCNVector3(p.x - px, p.y - py, p.z + 0.02))
+        }
+
+        var indices: [UInt32] = []
+        indices.reserveCapacity((m - 1) * 6)
+        for j in 0..<(m - 1) {
+            let a = UInt32(j * 2)
+            let b = a + 1
+            let c = a + 2
+            let d = a + 3
+            // two triangles (double-sided via material)
+            indices.append(contentsOf: [a, c, b, b, c, d])
+        }
+
+        // SCNVector3 may pack as 16 bytes on some platforms — use Float triples explicitly
+        var floats: [Float] = []
+        floats.reserveCapacity(verts.count * 3)
+        for v in verts {
+            floats.append(v.x); floats.append(v.y); floats.append(v.z)
+        }
+        let fData = Data(bytes: floats, count: floats.count * MemoryLayout<Float>.size)
+        let src = SCNGeometrySource(
+            data: fData,
+            semantic: .vertex,
+            vectorCount: verts.count,
+            usesFloatComponents: true,
+            componentsPerVector: 3,
+            bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0,
+            dataStride: MemoryLayout<Float>.size * 3
+        )
+        let idxData = Data(bytes: indices, count: indices.count * MemoryLayout<UInt32>.size)
+        let elem = SCNGeometryElement(
+            data: idxData,
+            primitiveType: .triangles,
+            primitiveCount: indices.count / 3,
+            bytesPerIndex: MemoryLayout<UInt32>.size
+        )
+        let geo = SCNGeometry(sources: [src], elements: [elem])
+        let mat = SCNMaterial()
+        mat.diffuse.contents = color
+        mat.lightingModel = .constant
+        mat.isDoubleSided = true
+        mat.writesToDepthBuffer = true
+        mat.readsFromDepthBuffer = true
+        geo.materials = [mat]
+        return SCNNode(geometry: geo)
     }
 }

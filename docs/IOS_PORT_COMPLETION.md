@@ -3,7 +3,7 @@
 This file is the **source of truth** for whether the port is “done.”  
 The durable watcher / scheduler agent must re-evaluate these gates and keep building until **all** must-have gates pass.
 
-Last updated: 2026-08-03 (free drag + multi-plate slots + preview feature toggles)
+Last updated: 2026-08-03 (G5 width ribbons + G6 OctoPrint)
 
 ## Philosophy
 
@@ -45,12 +45,12 @@ Last updated: 2026-08-03 (free drag + multi-plate slots + preview feature toggle
 ### G5 — Preview
 - [x] Basic G-code path preview + layer Z scrubber
 - [x] Feature-type toggles (wall/infill/support/travel)
-- [ ] Better fidelity (width or engine path data)
+- [x] Better fidelity (width or engine path data)
 
 ### G6 — Device / send
 - [x] Moonraker connect + G-code upload
 - [x] Start print + job status / cancel
-- [ ] OctoPrint or second host type
+- [x] OctoPrint or second host type
 
 ### G7 — Project
 - [x] Save 3MF
