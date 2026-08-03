@@ -105,21 +105,25 @@ Success = unit test on device: **slice a known STL → G-code matches desktop he
 | C ABI | `src/ios/orca_slice_c_api.{h,cpp}` | load/config/mesh export/bounds/transform/arrange/slice/progress |
 | CMake target | `src/ios/CMakeLists.txt` → `orca_ios_api` | `ORCA_IOS_API=ON` |
 | macOS headless engine | `build-macos-headless-arm64` | Sample cube → real G-code proven |
-| **iOS Simulator deps + engine** | `deps/build-ios-iphonesimulator-arm64`, `build-ios-iphonesimulator-arm64` | `liborca_engine.a` linked in Xcode |
+| **iOS Simulator deps + engine** | `deps/build-ios-iphonesimulator-arm64`, `build-ios-iphonesimulator-arm64` | `liborca_engine.a` linked in Xcode (`ORCA_LINKED`) |
+| **Physical device deps + engine** | `deps/build-ios-iphoneos-arm64`, `build-ios-iphoneos-arm64` | **Done** — `engine_bundle/lib/liborca_engine.a` (arm64) |
 | SwiftUI host | `ios/OrcaSlicerApp/*` | Prepare / Preview / Device, SceneKit orbit, real mesh |
+| App icon | `Assets.xcassets/AppIcon.appiconset` | **Done** — 3D Orca |
 | SceneKit plate | `PlateSceneView.swift` | Mesh from `orca_session_export_mesh`, G-code paths + layer Z |
 | Process sheet | Process | layer/walls/infill/support/brim/speeds/temps via DynamicPrintConfig |
-| Device | Moonraker | `server.info` connect + multipart G-code upload |
+| Device tab | Moonraker | `server.info` connect + multipart G-code upload |
+| Run-on-device docs | [`docs/RUN_ON_DEVICE.md`](docs/RUN_ON_DEVICE.md) | Simulator + physical iPhone, signing, rebuild |
 | Branch | `ios-port` on [S117X/IOS-port-OrcaSlicer](https://github.com/S117X/IOS-port-OrcaSlicer) | Pushed continuously |
 
 ### Still required
 
-1. ~~**Physical device** (`iphoneos`) deps + engine~~ done — `build-ios-iphoneos-arm64/engine_bundle`.  
-2. Fuller profile inheritance (official JSON inherits chains).  
-3. Metal/libvgcode-class toolpath preview (current path is SceneKit polylines).  
-4. Full desktop GUI parity (years of wx rebind — not the mobile product path).  
-5. AGPL compliance strategy before any store distribution.  
-6. Code-sign + install on a physical iPhone (team ID / free provisioning).
+1. ~~**Physical device** (`iphoneos`) deps + engine~~ **done** — `build-ios-iphoneos-arm64/engine_bundle`.  
+2. ~~**App icon** (3D Orca)~~ **done**.  
+3. Fuller profile inheritance (official JSON inherits chains).  
+4. Metal/libvgcode-class toolpath preview (current path is SceneKit polylines).  
+5. Full desktop GUI parity (years of wx rebind — not the mobile product path).  
+6. AGPL compliance strategy before any store distribution.  
+7. Per-developer code-sign + install on a physical iPhone (Team ID / free provisioning) — see [`docs/RUN_ON_DEVICE.md`](docs/RUN_ON_DEVICE.md).
 
 ## Immediate next engineering steps
 
@@ -129,24 +133,28 @@ Success = unit test on device: **slice a known STL → G-code matches desktop he
 4. ~~iOS Simulator deps + link ORCA_LINKED~~ done.  
 5. ~~Real mesh + orbit + G-code preview~~ done.  
 6. ~~Build **iphoneos** dep prefix + engine~~ done.  
-7. Device install (signing) + richer multi-plate UI.
+7. ~~App icon (3D Orca)~~ done.  
+8. Device install (each developer’s signing Team) + richer multi-plate UI.
 
 ---
 
 ## Commands (reference)
 
 ```bash
-# Official source (already cloned)
+# This fork, branch ios-port
 cd ~/Desktop/OrcaSlicer
-git remote -v   # must be github.com/OrcaSlicer/OrcaSlicer.git
 
-# Desktop macOS build (upstream path — for comparison / golden G-code)
-# See: https://www.orcaslicer.com/wiki/how_to_build
-# ./build_release_macos.sh
+# Simulator engine
+./scripts/build_ios_deps.sh iphonesimulator arm64
+./scripts/build_ios_engine_after_deps.sh iphonesimulator arm64
 
-# Future iOS (to be implemented on branch ios-port)
-# cmake -G Xcode -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/ios.cmake \
-#   -DSLIC3R_GUI=OFF -B build-ios
+# Physical device engine
+./scripts/build_ios_deps.sh iphoneos arm64
+./scripts/build_ios_engine_after_deps.sh iphoneos arm64
+
+# Host app
+open ios/OrcaSlicer.xcodeproj
+# Details: docs/RUN_ON_DEVICE.md
 ```
 
 ---
