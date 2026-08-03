@@ -80,6 +80,7 @@ struct OrcaRootView: View {
     @State private var gizmoMode: GizmoMode = .select
     @State private var showPreferences = false
     @State private var showAbout = false
+    @State private var showShortcuts = false
     @State private var showObjectSettings = false
     @State private var presetBundleShareURL: URL?
     @State private var textPlateName = "Text plate"
