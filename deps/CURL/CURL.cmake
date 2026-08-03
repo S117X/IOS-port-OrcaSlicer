@@ -57,6 +57,7 @@ else()
 endif()
 
 # Point FindOpenSSL at our dep prefix (iOS cross builds often miss CMAKE_PREFIX_PATH)
+# HAVE_POLL_FINE_EXITCODE: curl CMake try_run fails when CMAKE_SYSTEM_NAME=iOS
 set(_curl_ssl_hints "")
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ORCA_IOS_DEPS)
   set(_curl_ssl_hints
@@ -65,6 +66,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ORCA_IOS_DEPS)
     -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
     -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH
     -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+    -DHAVE_POLL_FINE_EXITCODE=0
+    -DHAVE_POLL_FINE_EXITCODE__TRYRUN_OUTPUT=""
   )
 endif ()
 
