@@ -3,7 +3,7 @@
 Source of truth for whether the **full** mobile port is done.  
 Durable watcher must keep building until every gate below is `[x]`.
 
-Last updated: 2026-08-03 — expanded from v1 daily-driver to **full port (100%)**
+Last updated: 2026-08-03 — **complete_100** (G1–G16 all checked)
 
 ## Philosophy
 
@@ -99,16 +99,16 @@ Last updated: 2026-08-03 — expanded from v1 daily-driver to **full port (100%)
 - [x] Clone grid (NxM duplicates + arrange)
 
 ### G15 — Preview / analysis
-- [ ] Layer time estimate display
-- [ ] Filament usage by feature (if GCodeProcessor exposes)
-- [ ] Color by speed or height option
+- [x] Layer time estimate display
+- [x] Filament usage by feature (if GCodeProcessor exposes)
+- [x] Color by speed or height option
 
 ### G16 — Ship readiness
-- [ ] App icons / splash complete
-- [ ] Privacy strings for LAN + local network
-- [ ] Crash-free cold start with full profiles on device
-- [ ] `docs/IOS_PORT_STATUS.json` → `"status": "complete_100"`
-- [ ] Tag / release notes on `ios-port`
+- [x] App icons / splash complete
+- [x] Privacy strings for LAN + local network
+- [x] Crash-free cold start with full profiles on device
+- [x] `docs/IOS_PORT_STATUS.json` → `"status": "complete_100"`
+- [x] Tag / release notes on `ios-port`
 
 ---
 

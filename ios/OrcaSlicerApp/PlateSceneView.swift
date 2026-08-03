@@ -552,33 +552,60 @@ struct MeshGeometry {
 // MARK: - G-code path preview (slic3r Z-up; parent content rotates)
 
 struct GCodePathGeometry {
+    /// Preview color mode (feature type / height gradient / speed gradient).
+    enum ColorMode: String, CaseIterable, Identifiable {
+        case feature
+        case height
+        case speed
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .feature: return "Feature"
+            case .height: return "Height"
+            case .speed: return "Speed"
+            }
+        }
+    }
+
     struct Segment {
         var points: [SCNVector3]
         var feature: String
         /// Extrusion width mm from official `;WIDTH:` comments (0 = travel / unknown)
         var width: Float
+        /// Feedrate mm/min from last F word on the segment (0 if unknown)
+        var feedrate: Float
     }
     var segments: [Segment]
     var zMin: Float = 0
     var zMax: Float = 0
+    var feedMin: Float = 0
+    var feedMax: Float = 0
     /// Default line width when WIDTH comment missing (from nozzle / line_width)
     var defaultWidth: Float = 0.45
 
     static func parse(url: URL, maxPoints: Int = 120_000, defaultWidth: Float = 0.45) -> GCodePathGeometry? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         var x: Float = 0, y: Float = 0, z: Float = 0
+        var feed: Float = 0
         var feature = "Unknown"
         var width = defaultWidth
         var segs: [Segment] = []
         var cur: [SCNVector3] = []
         var curWidth = defaultWidth
+        var curFeed: Float = 0
         var zMin: Float = .greatestFiniteMagnitude
         var zMax: Float = -.greatestFiniteMagnitude
+        var feedMin: Float = .greatestFiniteMagnitude
+        var feedMax: Float = -.greatestFiniteMagnitude
         var total = 0
 
         func flush() {
             if cur.count > 1 {
-                segs.append(Segment(points: cur, feature: feature, width: curWidth))
+                segs.append(Segment(points: cur, feature: feature, width: curWidth, feedrate: curFeed))
+                if curFeed > 0 {
+                    feedMin = min(feedMin, curFeed)
+                    feedMax = max(feedMax, curFeed)
+                }
             }
             cur = []
         }
@@ -612,15 +639,18 @@ struct GCodePathGeometry {
                 if token.hasPrefix("X") || token.hasPrefix("x") { nx = Float(token.dropFirst()) ?? nx }
                 else if token.hasPrefix("Y") || token.hasPrefix("y") { ny = Float(token.dropFirst()) ?? ny }
                 else if token.hasPrefix("Z") || token.hasPrefix("z") { nz = Float(token.dropFirst()) ?? nz }
-                else if token.hasPrefix("E") || token.hasPrefix("e") {
+                else if token.hasPrefix("F") || token.hasPrefix("f") {
+                    if let f = Float(token.dropFirst()), f > 0 { feed = f }
+                } else if token.hasPrefix("E") || token.hasPrefix("e") {
                     if let e = Float(token.dropFirst()), e > 0 { hasE = true }
                 }
             }
             if hasE {
-                // Extrusion → keep current ;TYPE: / ;WIDTH:
+                // Extrusion → keep current ;TYPE: / ;WIDTH: / F
                 if cur.isEmpty {
                     cur.append(SCNVector3(x, y, z))
                     curWidth = width
+                    curFeed = feed
                 }
                 cur.append(SCNVector3(nx, ny, nz))
                 zMin = min(zMin, nz)
@@ -637,7 +667,8 @@ struct GCodePathGeometry {
                         segs.append(Segment(
                             points: [SCNVector3(x, y, z), SCNVector3(nx, ny, nz)],
                             feature: "Travel",
-                            width: 0
+                            width: 0,
+                            feedrate: feed
                         ))
                         zMin = min(zMin, nz, z)
                         zMax = max(zMax, nz, z)
@@ -652,8 +683,10 @@ struct GCodePathGeometry {
         flush()
         guard !segs.isEmpty else { return nil }
         if zMin > zMax { zMin = 0; zMax = 0.2 }
+        if feedMin > feedMax { feedMin = 0; feedMax = 1 }
         return GCodePathGeometry(
-            segments: segs, zMin: zMin, zMax: zMax, defaultWidth: defaultWidth
+            segments: segs, zMin: zMin, zMax: zMax,
+            feedMin: feedMin, feedMax: feedMax, defaultWidth: defaultWidth
         )
     }
 
@@ -707,11 +740,12 @@ struct GCodePathGeometry {
             }
             let pts = seg.points.filter { $0.z <= maxZ + 0.001 }
             if pts.count > 1 {
-                out.append(Segment(points: pts, feature: seg.feature, width: seg.width))
+                out.append(Segment(points: pts, feature: seg.feature, width: seg.width, feedrate: seg.feedrate))
             }
         }
         return GCodePathGeometry(
-            segments: out, zMin: zMin, zMax: maxZ, defaultWidth: defaultWidth
+            segments: out, zMin: zMin, zMax: maxZ,
+            feedMin: feedMin, feedMax: feedMax, defaultWidth: defaultWidth
         )
     }
 
@@ -747,23 +781,65 @@ struct GCodePathGeometry {
         return UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
     }
 
+    /// Heatmap blue→cyan→green→yellow→red for t in 0…1.
+    static func gradientColor(t: Float, alpha: CGFloat = 1) -> UIColor {
+        let x = max(0, min(1, CGFloat(t)))
+        let r: CGFloat, g: CGFloat, b: CGFloat
+        if x < 0.25 {
+            let u = x / 0.25
+            r = 0.15; g = 0.35 + 0.45 * u; b = 0.95
+        } else if x < 0.5 {
+            let u = (x - 0.25) / 0.25
+            r = 0.15 + 0.1 * u; g = 0.80; b = 0.95 - 0.55 * u
+        } else if x < 0.75 {
+            let u = (x - 0.5) / 0.25
+            r = 0.25 + 0.70 * u; g = 0.80; b = 0.40 - 0.25 * u
+        } else {
+            let u = (x - 0.75) / 0.25
+            r = 0.95; g = 0.80 - 0.55 * u; b = 0.15
+        }
+        return UIColor(red: r, green: g, blue: b, alpha: alpha)
+    }
+
+    func color(for seg: Segment, mode: ColorMode) -> UIColor {
+        switch mode {
+        case .feature:
+            return Self.color(for: seg.feature)
+        case .height:
+            let midZ: Float
+            if let first = seg.points.first, let last = seg.points.last {
+                midZ = (first.z + last.z) * 0.5
+            } else {
+                midZ = zMin
+            }
+            let span = max(0.001, zMax - zMin)
+            let t = (midZ - zMin) / span
+            return Self.gradientColor(t: t)
+        case .speed:
+            let span = max(1, feedMax - feedMin)
+            let t = seg.feedrate > 0 ? (seg.feedrate - feedMin) / span : 0
+            return Self.gradientColor(t: t)
+        }
+    }
+
     /// Parent "content" applies Z-up → Y-up; do not rotate this node.
     /// Extrusions: ribbon quads at official `;WIDTH:` (fallback defaultWidth).
     /// Travel: thin line.
-    func makeNode(color: UIColor) -> SCNNode {
+    func makeNode(color: UIColor, colorMode: ColorMode = .feature) -> SCNNode {
         let root = SCNNode()
         root.name = "gcode"
         for seg in segments {
             guard seg.points.count > 1 else { continue }
+            let c = self.color(for: seg, mode: colorMode)
             let isTravel = Self.group(for: seg.feature) == .travel || seg.width <= 0.01
             if isTravel {
-                root.addChildNode(makeLineNode(points: seg.points, color: Self.color(for: seg.feature)))
+                root.addChildNode(makeLineNode(points: seg.points, color: c.withAlphaComponent(0.55)))
             } else {
                 let w = seg.width > 0.05 ? seg.width : defaultWidth
-                if let ribbon = makeRibbonNode(points: seg.points, width: w, color: Self.color(for: seg.feature)) {
+                if let ribbon = makeRibbonNode(points: seg.points, width: w, color: c) {
                     root.addChildNode(ribbon)
                 } else {
-                    root.addChildNode(makeLineNode(points: seg.points, color: Self.color(for: seg.feature)))
+                    root.addChildNode(makeLineNode(points: seg.points, color: c))
                 }
             }
         }

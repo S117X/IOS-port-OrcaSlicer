@@ -1435,10 +1435,25 @@ struct OrcaRootView: View {
             .disabled(!engine.hasModel || isSlicing)
 
             if !engine.lastSliceStatsText.isEmpty {
-                Text(engine.lastSliceStatsText)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(OrcaTheme.accent)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(engine.lastSliceStatsText)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OrcaTheme.accent)
+                    if !engine.lastAvgLayerTimeText.isEmpty {
+                        Text(engine.lastAvgLayerTimeText)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OrcaTheme.muted)
+                    }
+                    if !engine.filamentByRole.isEmpty {
+                        Text(engine.filamentByRole.prefix(4).map { r in
+                            String(format: "%@: %.1fg", r.name, r.grams)
+                        }.joined(separator: " · "))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(OrcaTheme.muted)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if let gcode = engine.gcodeURL {
@@ -1726,6 +1741,57 @@ struct OrcaRootView: View {
                     featureToggle("Support", isOn: $engine.previewShowSupport)
                     featureToggle("Travel", isOn: $engine.previewShowTravel)
                     featureToggle("Other", isOn: $engine.previewShowOther)
+                }
+            }
+
+            // Color mode: feature / height / speed
+            HStack(spacing: 8) {
+                Text("Color")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(OrcaTheme.muted)
+                ForEach(GCodePathGeometry.ColorMode.allCases) { mode in
+                    Button {
+                        engine.previewColorMode = mode
+                        engine.applyPreviewLayer()
+                    } label: {
+                        Text(mode.label)
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(engine.previewColorMode == mode
+                                        ? OrcaTheme.accent.opacity(0.28) : OrcaTheme.elevated)
+                            .foregroundStyle(engine.previewColorMode == mode
+                                             ? OrcaTheme.accent : OrcaTheme.muted)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+            }
+
+            // Analysis strip when stats available
+            if !engine.lastAvgLayerTimeText.isEmpty || !engine.filamentByRole.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !engine.lastAvgLayerTimeText.isEmpty {
+                        Text(engine.lastAvgLayerTimeText)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(OrcaTheme.muted)
+                    }
+                    if !engine.filamentByRole.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(Array(engine.filamentByRole.prefix(8).enumerated()), id: \.offset) { _, r in
+                                    Text(String(format: "%@: %.1fg", r.name, r.grams))
+                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(OrcaTheme.elevated)
+                                        .foregroundStyle(OrcaTheme.text)
+                                        .clipShape(Capsule())
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

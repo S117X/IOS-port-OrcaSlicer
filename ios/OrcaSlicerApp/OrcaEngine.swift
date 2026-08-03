@@ -18,6 +18,14 @@ final class OrcaEngine: ObservableObject {
     @Published var lastSliceFilamentMm3: Float = 0
     @Published var lastSliceLayers: Int = 0
     @Published var lastSliceStatsText: String = ""
+    /// Extended analysis (G15)
+    @Published var lastInitialLayerTimeSec: Float = 0
+    @Published var lastAvgLayerTimeSec: Float = 0
+    @Published var lastSupportMm3: Float = 0
+    @Published var lastWipeTowerMm3: Float = 0
+    @Published var lastAvgLayerTimeText: String = ""
+    /// Filament by feature/role: (name, meters, grams)
+    @Published var filamentByRole: [(name: String, meters: Float, grams: Float)] = []
     @Published var mesh: MeshGeometry?
     @Published var gcodePathNode: SCNNode?
     @Published var gcodeGeometry: GCodePathGeometry?
@@ -44,6 +52,8 @@ final class OrcaEngine: ObservableObject {
     @Published var previewShowSupport = true
     @Published var previewShowTravel = false
     @Published var previewShowOther = true
+    /// Color toolpaths by feature type, height, or feedrate
+    @Published var previewColorMode: GCodePathGeometry.ColorMode = .feature
 
     // MARK: System presets (all vendors / printers / process / filament)
     @Published var presetsLoaded = false
@@ -916,7 +926,8 @@ final class OrcaEngine: ObservableObject {
         let filtered = geo.filtered(maxZ: previewMaxZ, enabledGroups: groups)
         #if canImport(UIKit)
         gcodePathNode = filtered.makeNode(
-            color: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
+            color: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1),
+            colorMode: previewColorMode
         )
         #endif
     }
@@ -1577,6 +1588,42 @@ final class OrcaEngine: ObservableObject {
             } else {
                 self.lastSliceStatsText = ""
             }
+            // Extended analysis (layer times + role usage)
+            var initT: Float = 0, avgT: Float = 0, sup: Float = 0, wipe: Float = 0
+            var t2: Float = 0, fil2: Float = 0
+            var layers2: Int32 = 0
+            if orca_session_last_slice_analysis(sess, &t2, &initT, &avgT, &fil2, &sup, &wipe, &layers2) == 0 {
+                self.lastInitialLayerTimeSec = initT
+                self.lastAvgLayerTimeSec = avgT
+                self.lastSupportMm3 = sup
+                self.lastWipeTowerMm3 = wipe
+                if avgT > 0 {
+                    let am = Int(avgT) / 60
+                    let as_ = Int(avgT) % 60
+                    let im = Int(initT) / 60
+                    let is_ = Int(initT) % 60
+                    self.lastAvgLayerTimeText = String(
+                        format: "avg layer ~%dm %02ds · 1st ~%dm %02ds",
+                        am, as_, im, is_
+                    )
+                } else {
+                    self.lastAvgLayerTimeText = ""
+                }
+            } else {
+                self.lastAvgLayerTimeText = ""
+            }
+            let rc = Int(orca_session_filament_role_count(sess))
+            var roles: [(name: String, meters: Float, grams: Float)] = []
+            roles.reserveCapacity(rc)
+            for i in 0..<rc {
+                guard let c = orca_session_filament_role_name(sess, Int32(i)) else { continue }
+                let name = String(cString: c)
+                let m = orca_session_filament_role_meters(sess, Int32(i))
+                let g = orca_session_filament_role_grams(sess, Int32(i))
+                roles.append((name, m, g))
+            }
+            roles.sort { $0.grams > $1.grams }
+            self.filamentByRole = roles
             // Default ribbon width from official line_width / nozzle_diameter
             var defW: Float = 0.45
             if let lw = self.getOptionFirst("line_width").flatMap(Float.init), lw > 0.05 {

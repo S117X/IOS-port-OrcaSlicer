@@ -1,14 +1,14 @@
 {
-  "status": "porting_to_100",
-  "percent_estimate": 95,
-  "updated": "2026-08-03T12:55:00Z",
+  "status": "complete_100",
+  "percent_estimate": 100,
+  "updated": "2026-08-03T13:15:00Z",
   "branch": "ios-port",
-  "last_focus": "G13 export/import/user filament + G14 cut/repair/clone grid",
+  "last_focus": "G15 preview analysis + G16 ship readiness → complete_100",
   "gates": {
     "G1": true, "G2": true, "G3": true, "G4": true,
     "G5": true, "G6": true, "G7": true, "G8": true,
     "G9": true, "G10": true, "G11": true, "G12": true,
-    "G13": true, "G14": true, "G15": false, "G16": false
+    "G13": true, "G14": true, "G15": true, "G16": true
   },
-  "notes": "G13: export_config JSON, import user process/filament from Files, save_user_filament. G14: Cut::perform_with_plane, MeshBoolean::cgal::repair + open-edge stats, clone_grid+arrange. Device BUILD SUCCEEDED. Remaining: G15 preview analysis, G16 ship readiness."
+  "notes": "G15: last_slice_analysis + filament_role_* from GCodeProcessor; avg/1st layer time UI; color by feature/height/speed. G16: AppIcon 1024, launch logo+LaunchBackground, local-network privacy, release notes docs/IOS_PORT_100_RELEASE.md, tag ios-port-100. All G1–G16 complete."
 }

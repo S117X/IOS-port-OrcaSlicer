@@ -21,6 +21,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Format/3mf.hpp"
@@ -63,8 +64,15 @@ struct orca_session {
     // Last slice stats (from GCodeProcessorResult)
     bool        has_slice_stats{false};
     float       last_time_sec{0.f};
+    float       last_initial_layer_time_sec{0.f};
     float       last_filament_mm3{0.f};
+    float       last_support_mm3{0.f};
+    float       last_wipe_tower_mm3{0.f};
     int         last_layers{0};
+    // Filament by extrusion role: name, meters, grams
+    std::vector<std::string> role_names;
+    std::vector<float>       role_meters;
+    std::vector<float>       role_grams;
 
     // Official calibration (applied at slice via Print::set_calib_params)
     Calib_Params calib_params;
@@ -457,10 +465,29 @@ int orca_session_slice_to_gcode(orca_session_t *s, const char *gcode_out_path)
         s->has_slice_stats = true;
         s->last_time_sec = result.print_statistics.modes[
             static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+        s->last_initial_layer_time_sec = result.initial_layer_time;
         double vol = 0.0;
         for (const auto &kv : result.print_statistics.model_volumes_per_extruder)
             vol += kv.second;
         s->last_filament_mm3 = float(vol);
+        double support_vol = 0.0;
+        for (const auto &kv : result.print_statistics.support_volumes_per_extruder)
+            support_vol += kv.second;
+        s->last_support_mm3 = float(support_vol);
+        double wipe_vol = 0.0;
+        for (const auto &kv : result.print_statistics.wipe_tower_volumes_per_extruder)
+            wipe_vol += kv.second;
+        s->last_wipe_tower_mm3 = float(wipe_vol);
+        // Filament usage by extrusion role (meters + grams)
+        s->role_names.clear();
+        s->role_meters.clear();
+        s->role_grams.clear();
+        for (const auto &kv : result.print_statistics.used_filaments_per_role) {
+            std::string name = ExtrusionEntity::role_to_string(kv.first);
+            s->role_names.push_back(name);
+            s->role_meters.push_back(float(kv.second.first));
+            s->role_grams.push_back(float(kv.second.second));
+        }
         // Layer count estimate from model height / layer_height
         s->last_layers = 0;
         try {
@@ -1440,6 +1467,61 @@ int orca_session_last_slice_stats(
     if (filament_mm3) *filament_mm3 = s->last_filament_mm3;
     if (layers) *layers = s->last_layers;
     return 0;
+}
+
+int orca_session_last_slice_analysis(
+    orca_session_t *s,
+    float *time_sec,
+    float *initial_layer_time_sec,
+    float *avg_layer_time_sec,
+    float *filament_mm3,
+    float *support_mm3,
+    float *wipe_tower_mm3,
+    int *layers)
+{
+    if (!s || !s->has_slice_stats)
+        return -1;
+    if (time_sec) *time_sec = s->last_time_sec;
+    if (initial_layer_time_sec) *initial_layer_time_sec = s->last_initial_layer_time_sec;
+    if (avg_layer_time_sec) {
+        if (s->last_layers > 0)
+            *avg_layer_time_sec = s->last_time_sec / float(s->last_layers);
+        else
+            *avg_layer_time_sec = 0.f;
+    }
+    if (filament_mm3) *filament_mm3 = s->last_filament_mm3;
+    if (support_mm3) *support_mm3 = s->last_support_mm3;
+    if (wipe_tower_mm3) *wipe_tower_mm3 = s->last_wipe_tower_mm3;
+    if (layers) *layers = s->last_layers;
+    return 0;
+}
+
+int orca_session_filament_role_count(orca_session_t *s)
+{
+    if (!s || !s->has_slice_stats)
+        return 0;
+    return int(s->role_names.size());
+}
+
+const char *orca_session_filament_role_name(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= int(s->role_names.size()))
+        return nullptr;
+    return s->role_names[size_t(index)].c_str();
+}
+
+float orca_session_filament_role_meters(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= int(s->role_meters.size()))
+        return 0.f;
+    return s->role_meters[size_t(index)];
+}
+
+float orca_session_filament_role_grams(orca_session_t *s, int index)
+{
+    if (!s || index < 0 || index >= int(s->role_grams.size()))
+        return 0.f;
+    return s->role_grams[size_t(index)];
 }
 
 int orca_session_set_data_dir(orca_session_t *s, const char *data_path)

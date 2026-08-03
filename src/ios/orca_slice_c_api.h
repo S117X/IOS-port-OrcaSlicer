@@ -271,6 +271,31 @@ ORCA_API int orca_session_last_slice_stats(
     int *layers);
 
 /**
+ * Extended analysis from last GCodeProcessorResult.
+ * initial_layer_time_sec / avg_layer_time_sec (time/layers estimate).
+ * support_mm3 / wipe_tower_mm3 from volume maps.
+ * @return 0 if stats available
+ */
+ORCA_API int orca_session_last_slice_analysis(
+    orca_session_t *s,
+    float *time_sec,
+    float *initial_layer_time_sec,
+    float *avg_layer_time_sec,
+    float *filament_mm3,
+    float *support_mm3,
+    float *wipe_tower_mm3,
+    int *layers);
+
+/**
+ * Filament usage by extrusion role (official used_filaments_per_role).
+ * meters / grams per role after last successful slice.
+ */
+ORCA_API int orca_session_filament_role_count(orca_session_t *s);
+ORCA_API const char *orca_session_filament_role_name(orca_session_t *s, int index);
+ORCA_API float orca_session_filament_role_meters(orca_session_t *s, int index);
+ORCA_API float orca_session_filament_role_grams(orca_session_t *s, int index);
+
+/**
  * Writable data dir for installed system presets (Documents/OrcaSlicer).
  * Call after create, before load_all_presets.
  */
