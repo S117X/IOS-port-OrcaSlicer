@@ -410,6 +410,7 @@ struct OrcaRootView: View {
             }
 
             if engine.hasModel && mainTab == .prepare {
+                objectPickerRow
                 plateToolsRow
             }
 
@@ -488,6 +489,47 @@ struct OrcaRootView: View {
             .background(OrcaTheme.elevated)
             .foregroundStyle(OrcaTheme.text)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var objectPickerRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                objectChip(title: "All", selected: engine.selectedObjectIndex < 0) {
+                    engine.selectedObjectIndex = -1
+                }
+                ForEach(Array(engine.objectNames.enumerated()), id: \.offset) { i, name in
+                    objectChip(title: name, selected: engine.selectedObjectIndex == i) {
+                        engine.selectedObjectIndex = i
+                    }
+                }
+                toolChip("Duplicate", "plus.square.on.square") {
+                    engine.duplicateSelected(); status = engine.lastMessage
+                }
+                toolChip("Delete", "trash") {
+                    engine.deleteSelected(); status = engine.lastMessage
+                }
+                toolChip("Clear", "xmark.rectangle") {
+                    engine.clearPlate(); status = engine.lastMessage
+                }
+            }
+        }
+    }
+
+    private func objectChip(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(selected ? OrcaTheme.accent.opacity(0.25) : OrcaTheme.elevated)
+                .foregroundStyle(selected ? OrcaTheme.accent : OrcaTheme.text)
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule().stroke(selected ? OrcaTheme.accent : Color.clear, lineWidth: 1)
+                )
         }
         .buttonStyle(.plain)
     }
@@ -585,10 +627,17 @@ struct OrcaRootView: View {
                     }
                 }
                 Section("Printer / plate") {
-                    labeled("Bed", "\(Int(engine.bedSize.x)) × \(Int(engine.bedSize.y)) × 250 mm")
+                    labeled("Bed", "\(Int(engine.bedSize.x)) × \(Int(engine.bedSize.y)) × \(Int(engine.bedHeight)) mm")
                     labeled("Nozzle", "0.4 mm")
                     labeled("Filament", "1.75 mm PLA")
                     labeled("Profile", "process_0.20mm_Standard")
+                    HStack(spacing: 8) {
+                        bedPreset("220²", 220, 220)
+                        bedPreset("256²", 256, 256)
+                        bedPreset("300²", 300, 300)
+                        bedPreset("350²", 350, 350)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
                 }
                 Section {
                     processField(title: "layer_height", unit: "mm", text: $layerHeight) {
@@ -737,6 +786,22 @@ struct OrcaRootView: View {
             Text(value).foregroundStyle(OrcaTheme.text).multilineTextAlignment(.trailing)
         }
         .listRowBackground(OrcaTheme.panel)
+    }
+
+    private func bedPreset(_ title: String, _ w: Float, _ d: Float) -> some View {
+        Button {
+            engine.setBedSize(width: w, depth: d, height: engine.bedHeight)
+            status = engine.lastMessage
+        } label: {
+            Text(title)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(OrcaTheme.elevated)
+                .foregroundStyle(OrcaTheme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private func processField(title: String, unit: String, text: Binding<String>, apply: @escaping () -> Void) -> some View {

@@ -493,6 +493,10 @@ endif ()
 if (MSVC)
     # Experimental
     #list(APPEND _dep_list "dep_qhull")
+elseif (ORCA_IOS_DEPS OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # Qhull's CMake install expects MACOSX_BUNDLE destinations — broken for iOS.
+    # Engine does not require Qhull for headless libslic3r slice path.
+    message(STATUS "ORCA_IOS_DEPS/iOS: skipping Qhull")
 else()
     list(APPEND _dep_list "dep_Qhull")
     # Not working, static build has different Eigen

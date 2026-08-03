@@ -56,6 +56,18 @@ else()
   set(_curl_static ON)
 endif()
 
+# Point FindOpenSSL at our dep prefix (iOS cross builds often miss CMAKE_PREFIX_PATH)
+set(_curl_ssl_hints "")
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ORCA_IOS_DEPS)
+  set(_curl_ssl_hints
+    -DOPENSSL_ROOT_DIR:PATH=${DESTDIR}
+    -DOPENSSL_USE_STATIC_LIBS:BOOL=ON
+    -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
+    -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH
+    -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+  )
+endif ()
+
 orcaslicer_add_cmake_project(CURL
   # GIT_REPOSITORY      https://github.com/curl/curl.git
   # GIT_TAG             curl-7_75_0
@@ -70,6 +82,7 @@ orcaslicer_add_cmake_project(CURL
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DCURL_STATICLIB=${_curl_static}
     ${_curl_platform_flags}
+    ${_curl_ssl_hints}
 )
 
 if(NOT OPENSSL_FOUND)

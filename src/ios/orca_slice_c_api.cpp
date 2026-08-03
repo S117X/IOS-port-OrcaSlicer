@@ -551,6 +551,167 @@ int orca_session_arrange(orca_session_t *s)
     }
 }
 
+int orca_session_delete_object(orca_session_t *s, int index)
+{
+    if (!s || !s->has_model || index < 0 || index >= int(s->model.objects.size()))
+        return -1;
+    try {
+        s->model.delete_object(size_t(index));
+        if (s->model.objects.empty()) {
+            s->has_model = false;
+        }
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("delete_object: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("delete_object: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_clear_model(orca_session_t *s)
+{
+    if (!s)
+        return -1;
+    try {
+        s->model.clear_objects();
+        s->has_model = false;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("clear_model: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("clear_model: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_bed_size(orca_session_t *s, float *width, float *depth, float *height)
+{
+    if (!s)
+        return -1;
+    try {
+        ensure_default_config(s);
+        float w = 220.f, d = 220.f, h = 250.f;
+        if (const ConfigOptionPoints *pa = s->config.option<ConfigOptionPoints>("printable_area")) {
+            if (!pa->values.empty()) {
+                BoundingBoxf bedbb;
+                for (const Vec2d &p : pa->values)
+                    bedbb.merge(Vec2d(p.x(), p.y()));
+                w = float(bedbb.max.x() - bedbb.min.x());
+                d = float(bedbb.max.y() - bedbb.min.y());
+            }
+        }
+        if (const ConfigOptionFloat *ph = s->config.option<ConfigOptionFloat>("printable_height")) {
+            h = float(ph->value);
+        }
+        if (width) *width = w;
+        if (depth) *depth = d;
+        if (height) *height = h;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("bed_size: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("bed_size: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_duplicate_object(orca_session_t *s, int index)
+{
+    if (!s || !s->has_model || index < 0 || index >= int(s->model.objects.size()))
+        return -1;
+    try {
+        ModelObject *src = s->model.objects[size_t(index)];
+        if (!src)
+            return -2;
+        ModelObject *dup = s->model.add_object(*src);
+        if (!dup)
+            return -3;
+        // Nudge clone so it is visible next to original
+        for (ModelInstance *inst : dup->instances) {
+            if (!inst) continue;
+            inst->set_offset(inst->get_offset() + Vec3d(15.0, 0.0, 0.0));
+        }
+        dup->invalidate_bounding_box();
+        dup->ensure_on_bed();
+        return int(s->model.objects.size()) - 1;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("duplicate: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("duplicate: unknown error");
+        return -4;
+    }
+}
+
+int orca_session_export_object_mesh(
+    orca_session_t *s,
+    int index,
+    float **out_positions,
+    size_t *out_vertex_count,
+    uint32_t **out_indices,
+    size_t *out_index_count)
+{
+    if (!s || !out_positions || !out_vertex_count || !out_indices || !out_index_count)
+        return -1;
+    *out_positions = nullptr;
+    *out_indices = nullptr;
+    *out_vertex_count = 0;
+    *out_index_count = 0;
+    if (!s->has_model || index < 0 || index >= int(s->model.objects.size())) {
+        s->set_error("bad object index");
+        return -2;
+    }
+    try {
+        ModelObject *obj = s->model.objects[size_t(index)];
+        if (!obj) {
+            s->set_error("null object");
+            return -3;
+        }
+        // mesh() includes instance transforms (world / assembly)
+        TriangleMesh mesh = obj->mesh();
+        const indexed_triangle_set &its = mesh.its;
+        if (its.vertices.empty() || its.indices.empty()) {
+            s->set_error("object mesh empty");
+            return -4;
+        }
+        const size_t nv = its.vertices.size();
+        const size_t nf = its.indices.size();
+        auto *pos = static_cast<float *>(std::malloc(nv * 3 * sizeof(float)));
+        auto *idx = static_cast<uint32_t *>(std::malloc(nf * 3 * sizeof(uint32_t)));
+        if (!pos || !idx) {
+            std::free(pos);
+            std::free(idx);
+            s->set_error("out of memory");
+            return -5;
+        }
+        for (size_t i = 0; i < nv; ++i) {
+            pos[i * 3 + 0] = its.vertices[i].x();
+            pos[i * 3 + 1] = its.vertices[i].y();
+            pos[i * 3 + 2] = its.vertices[i].z();
+        }
+        for (size_t i = 0; i < nf; ++i) {
+            idx[i * 3 + 0] = uint32_t(its.indices[i][0]);
+            idx[i * 3 + 1] = uint32_t(its.indices[i][1]);
+            idx[i * 3 + 2] = uint32_t(its.indices[i][2]);
+        }
+        *out_positions = pos;
+        *out_vertex_count = nv;
+        *out_indices = idx;
+        *out_index_count = nf * 3;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("export_object_mesh: ") + ex.what());
+        return -6;
+    } catch (...) {
+        s->set_error("export_object_mesh: unknown error");
+        return -6;
+    }
+}
+
 const char *orca_session_last_error(orca_session_t *s)
 {
     if (!s)

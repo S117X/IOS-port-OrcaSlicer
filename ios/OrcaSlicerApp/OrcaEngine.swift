@@ -17,8 +17,11 @@ final class OrcaEngine: ObservableObject {
     @Published var gcodePathNode: SCNNode?
     @Published var gcodeGeometry: GCodePathGeometry?
     @Published var objectCount: Int = 0
+    @Published var objectNames: [String] = []
+    @Published var selectedObjectIndex: Int = -1 // -1 = all
     @Published var boundsText: String = ""
     @Published var bedSize: SIMD2<Float> = SIMD2(220, 220)
+    @Published var bedHeight: Float = 250
     /// Layer scrubber: max Z shown in Preview (mm)
     @Published var previewMaxZ: Float = 100
     @Published var gcodeZMin: Float = 0
@@ -88,6 +91,44 @@ final class OrcaEngine: ObservableObject {
         _ = setOptionRaw("printable_area", "0x0,220x0,220x220,0x220")
         _ = setOptionRaw("printable_height", "250")
         bedSize = SIMD2(220, 220)
+        bedHeight = 250
+        refreshBedSize()
+        #endif
+    }
+
+    func refreshBedSize() {
+        #if ORCA_LINKED
+        guard let s = session else { return }
+        var w: Float = 220, d: Float = 220, h: Float = 250
+        if orca_session_bed_size(s, &w, &d, &h) == 0 {
+            bedSize = SIMD2(w, d)
+            bedHeight = h
+        }
+        #endif
+    }
+
+    func refreshObjectList() {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else {
+            objectNames = []
+            objectCount = 0
+            return
+        }
+        let n = Int(orca_session_object_count(s))
+        objectCount = n
+        var names: [String] = []
+        for i in 0..<n {
+            if let c = orca_session_object_name(s, Int32(i)) {
+                let name = String(cString: c)
+                names.append(name.isEmpty ? "Object \(i + 1)" : name)
+            } else {
+                names.append("Object \(i + 1)")
+            }
+        }
+        objectNames = names
+        if selectedObjectIndex >= n {
+            selectedObjectIndex = n > 0 ? 0 : -1
+        }
         #endif
     }
 
@@ -172,11 +213,12 @@ final class OrcaEngine: ObservableObject {
         }
         modelName = url.lastPathComponent
         hasModel = true
-        objectCount = Int(orca_session_object_count(s))
         // Center on bed so cube appears on the plate grid
         _ = orca_session_center_on_bed(s)
+        refreshObjectList()
         refreshMesh()
         refreshBounds()
+        refreshBedSize()
         gcodeURL = nil
         gcodePathNode = nil
         gcodeGeometry = nil
@@ -269,11 +311,17 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    /// index -1 = all objects
-    func translate(dx: Float, dy: Float, dz: Float = 0, index: Int = -1) {
+    /// Uses selectedObjectIndex when index omitted (-1 = all, or selection)
+    private var transformIndex: Int32 {
+        Int32(selectedObjectIndex)
+    }
+
+    /// index -1 = all objects; default uses selectedObjectIndex
+    func translate(dx: Float, dy: Float, dz: Float = 0, index: Int? = nil) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
-        let rc = orca_session_translate_object(s, Int32(index), dx, dy, dz)
+        let idx = Int32(index ?? selectedObjectIndex)
+        let rc = orca_session_translate_object(s, idx, dx, dy, dz)
         if rc == 0 {
             refreshMesh(); refreshBounds()
             lastMessage = String(format: "Moved Δ(%.1f, %.1f, %.1f) mm", dx, dy, dz)
@@ -283,10 +331,11 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    func rotateZ(degrees: Float, index: Int = -1) {
+    func rotateZ(degrees: Float, index: Int? = nil) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
-        let rc = orca_session_rotate_object_z(s, Int32(index), degrees)
+        let idx = Int32(index ?? selectedObjectIndex)
+        let rc = orca_session_rotate_object_z(s, idx, degrees)
         if rc == 0 {
             refreshMesh(); refreshBounds()
             lastMessage = String(format: "Rotated Z %.0f°", degrees)
@@ -296,10 +345,11 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    func scale(factor: Float, index: Int = -1) {
+    func scale(factor: Float, index: Int? = nil) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
-        let rc = orca_session_scale_object(s, Int32(index), factor)
+        let idx = Int32(index ?? selectedObjectIndex)
+        let rc = orca_session_scale_object(s, idx, factor)
         if rc == 0 {
             refreshMesh(); refreshBounds()
             lastMessage = String(format: "Scaled ×%.2f", factor)
@@ -328,6 +378,76 @@ final class OrcaEngine: ObservableObject {
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "arrange failed"
         }
+        #endif
+    }
+
+    func duplicateSelected() {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        let rc = orca_session_duplicate_object(s, Int32(idx))
+        if rc >= 0 {
+            hasModel = true
+            refreshObjectList()
+            selectedObjectIndex = Int(rc)
+            refreshMesh(); refreshBounds()
+            lastMessage = "Duplicated object → index \(rc)"
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "duplicate failed"
+        }
+        #endif
+    }
+
+    func deleteSelected() {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else { return }
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        let rc = orca_session_delete_object(s, Int32(idx))
+        if rc == 0 {
+            let n = Int(orca_session_object_count(s))
+            hasModel = n > 0
+            if !hasModel {
+                mesh = nil
+                modelName = nil
+                objectNames = []
+                objectCount = 0
+                lastMessage = "Plate empty"
+            } else {
+                refreshObjectList()
+                refreshMesh(); refreshBounds()
+                lastMessage = "Deleted object \(idx)"
+            }
+        } else {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "delete failed"
+        }
+        #endif
+    }
+
+    func clearPlate() {
+        #if ORCA_LINKED
+        guard let s = session else { return }
+        _ = orca_session_clear_model(s)
+        hasModel = false
+        mesh = nil
+        modelName = nil
+        objectNames = []
+        objectCount = 0
+        gcodeURL = nil
+        gcodePathNode = nil
+        gcodeGeometry = nil
+        lastMessage = "Plate cleared"
+        #endif
+    }
+
+    /// Common bed sizes (mm) — updates printable_area + printable_height
+    func setBedSize(width: Float, depth: Float, height: Float = 250) {
+        #if ORCA_LINKED
+        let area = String(format: "0x0,%.0fx0,%.0fx%.0f,0x%.0f", width, width, depth, depth)
+        _ = setOptionRaw("printable_area", area)
+        _ = setOptionRaw("printable_height", String(format: "%.0f", height))
+        bedSize = SIMD2(width, depth)
+        bedHeight = height
+        lastMessage = String(format: "Bed %.0f×%.0f×%.0f mm", width, depth, height)
         #endif
     }
 

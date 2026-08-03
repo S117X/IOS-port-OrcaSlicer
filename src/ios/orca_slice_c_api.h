@@ -129,6 +129,41 @@ ORCA_API int orca_session_scale_object(
  */
 ORCA_API int orca_session_arrange(orca_session_t *s);
 
+/**
+ * Delete model object at index. Reindexes remaining objects.
+ * @return 0 on success
+ */
+ORCA_API int orca_session_delete_object(orca_session_t *s, int index);
+
+/**
+ * Clear all model objects.
+ */
+ORCA_API int orca_session_clear_model(orca_session_t *s);
+
+/**
+ * Read printable bed size from config (printable_area polygon extents).
+ * @return 0 on success
+ */
+ORCA_API int orca_session_bed_size(orca_session_t *s, float *width, float *depth, float *height);
+
+/**
+ * Duplicate object at index (clone + offset).
+ * @return new object index, or <0 on error
+ */
+ORCA_API int orca_session_duplicate_object(orca_session_t *s, int index);
+
+/**
+ * Export mesh for a single object (world space after instances).
+ * Same layout as orca_session_export_mesh; free with orca_free.
+ */
+ORCA_API int orca_session_export_object_mesh(
+    orca_session_t *s,
+    int index,
+    float **out_positions,
+    size_t *out_vertex_count,
+    uint32_t **out_indices,
+    size_t *out_index_count);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);

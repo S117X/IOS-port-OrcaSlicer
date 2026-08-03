@@ -10,6 +10,18 @@ if (IN_GIT_REPO)
     set(OPENVDB_DIRECTORY_FLAG --directory ${BINARY_DIR_REL}/dep_OpenVDB-prefix/src/dep_OpenVDB)
 endif ()
 
+set(_openvdb_ios_hints "")
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ORCA_IOS_DEPS)
+  set(_openvdb_ios_hints
+    -DBOOST_ROOT:PATH=${DESTDIR}
+    -DBoost_NO_SYSTEM_PATHS:BOOL=ON
+    -DBoost_USE_STATIC_LIBS:BOOL=ON
+    -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
+    -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH
+    -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH
+  )
+endif ()
+
 orcaslicer_add_cmake_project(OpenVDB
     #  support vs2022, update to 8.2
     URL https://github.com/tamasmeszaros/openvdb/archive/a68fd58d0e2b85f01adeb8b13d7555183ab10aa5.zip 
@@ -26,6 +38,7 @@ orcaslicer_add_cmake_project(OpenVDB
         -DTBB_STATIC=${_build_static}
         -DOPENVDB_BUILD_VDB_PRINT=ON
         -DDISABLE_DEPENDENCY_VERSION_CHECKS=ON # Centos6 has old zlib
+        ${_openvdb_ios_hints}
 )
 
 if (MSVC)
