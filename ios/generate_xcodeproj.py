@@ -9,10 +9,13 @@ PROJ = ROOT / "OrcaSlicer.xcodeproj"
 PROJ.mkdir(exist_ok=True)
 
 ENGINE_MAC = REPO / "build-macos-headless-arm64" / "engine_bundle" / "lib"
-ENGINE_IOS = REPO / "build-ios-iphonesimulator-arm64" / "engine_bundle" / "lib"
+ENGINE_IOS_SIM = REPO / "build-ios-iphonesimulator-arm64" / "engine_bundle" / "lib"
+ENGINE_IOS_DEV = REPO / "build-ios-iphoneos-arm64" / "engine_bundle" / "lib"
 
 has_mac_engine = (ENGINE_MAC / "liborca_engine.a").is_file()
-has_ios_engine = (ENGINE_IOS / "liborca_engine.a").is_file()
+has_ios_sim_engine = (ENGINE_IOS_SIM / "liborca_engine.a").is_file()
+has_ios_dev_engine = (ENGINE_IOS_DEV / "liborca_engine.a").is_file()
+has_ios_engine = has_ios_sim_engine or has_ios_dev_engine
 
 
 def uid():
@@ -29,7 +32,10 @@ IDs = {k: uid() for k in [
 ]}
 
 mac_lib_path = "$(SRCROOT)/../build-macos-headless-arm64/engine_bundle/lib"
-ios_lib_path = "$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib"
+ios_sim_lib_path = "$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib"
+ios_dev_lib_path = "$(SRCROOT)/../build-ios-iphoneos-arm64/engine_bundle/lib"
+# Prefer per-SDK paths; fall back to sim path for legacy single-bundle setups
+ios_lib_path = ios_sim_lib_path if has_ios_sim_engine else ios_dev_lib_path
 hdr_path = "$(SRCROOT)/../src/ios"
 
 mac_ld = (
@@ -101,10 +107,10 @@ def tgt_settings(name: str) -> str:
             "\t\t\t\t);",
             '\t\t\t\t"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx*]" = "ORCA_LINKED";',
         ]
-    if has_ios_engine:
+    if has_ios_sim_engine:
         lines += [
             f'\t\t\t\t"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (',
-            f'\t\t\t\t\t"{ios_lib_path}",',
+            f'\t\t\t\t\t"{ios_sim_lib_path}",',
             '\t\t\t\t\t"$(inherited)",',
             "\t\t\t\t);",
             f'\t\t\t\t"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (',
@@ -112,9 +118,24 @@ def tgt_settings(name: str) -> str:
             f'\t\t\t\t\t"{ios_ld}",',
             "\t\t\t\t);",
             '\t\t\t\t"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = "ORCA_LINKED";',
-            # Device arm64 uses same path once built for iphoneos (future)
+        ]
+    if has_ios_dev_engine:
+        lines += [
             f'\t\t\t\t"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (',
-            f'\t\t\t\t\t"{ios_lib_path}",',
+            f'\t\t\t\t\t"{ios_dev_lib_path}",',
+            '\t\t\t\t\t"$(inherited)",',
+            "\t\t\t\t);",
+            f'\t\t\t\t"OTHER_LDFLAGS[sdk=iphoneos*]" = (',
+            '\t\t\t\t\t"$(inherited)",',
+            f'\t\t\t\t\t"{ios_ld}",',
+            "\t\t\t\t);",
+            '\t\t\t\t"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "ORCA_LINKED";',
+        ]
+    elif has_ios_sim_engine:
+        # Device not ready yet — still declare ORCA_LINKED path so project stays consistent
+        lines += [
+            f'\t\t\t\t"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (',
+            f'\t\t\t\t\t"{ios_sim_lib_path}",',
             '\t\t\t\t\t"$(inherited)",',
             "\t\t\t\t);",
             f'\t\t\t\t"OTHER_LDFLAGS[sdk=iphoneos*]" = (',
@@ -342,4 +363,5 @@ pbx = f'''// !$*UTF8*$!
 (PROJ / "project.pbxproj").write_text(pbx)
 print("Wrote", PROJ / "project.pbxproj")
 print("has_mac_engine=", has_mac_engine)
-print("has_ios_engine=", has_ios_engine)
+print("has_ios_sim_engine=", has_ios_sim_engine)
+print("has_ios_dev_engine=", has_ios_dev_engine)
