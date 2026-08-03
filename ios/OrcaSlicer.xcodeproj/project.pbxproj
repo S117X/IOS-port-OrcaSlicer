@@ -1,18 +1,20 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
+	classes = {
+	};
 	objectVersion = 56;
 	objects = {
 
 /* Begin PBXBuildFile section */
-		AED81AD4ADEE4B7BA202CC9C /* OrcaSlicerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OrcaSlicerApp.swift */; };
-		3E6A05795D6845F1AD58652E /* OrcaEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* OrcaEngine.swift */; };
-		9EA9AF9F3C284FF3AEFA1A99 /* PlateSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PlateSceneView.swift */; };
 		08943D8A003348C789D4488C /* sample_cube_20mm.stl in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* sample_cube_20mm.stl */; };
-		4E568A402B8B4376AB1A727A /* OrcaSlicerLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* OrcaSlicerLogo.png */; };
-		DDE238A458A9450191858168 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; };
 		2FCF4FDFBF81444F9A5BCA77 /* process_0.20mm_Standard.json in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; };
+		B16F1E0016A00F1E0000001A /* process_0.16mm_Fine.json in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000A /* process_0.16mm_Fine.json */; };
+		3E6A05795D6845F1AD58652E /* OrcaEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* OrcaEngine.swift */; };
+		4E568A402B8B4376AB1A727A /* OrcaSlicerLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* OrcaSlicerLogo.png */; };
+		9EA9AF9F3C284FF3AEFA1A99 /* PlateSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PlateSceneView.swift */; };
+		AED81AD4ADEE4B7BA202CC9C /* OrcaSlicerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OrcaSlicerApp.swift */; };
+		DDE238A458A9450191858168 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -20,25 +22,35 @@
 		A10000000000000000000002 /* OrcaEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrcaEngine.swift; sourceTree = "<group>"; };
 		A10000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000004 /* Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Bridging-Header.h"; sourceTree = "<group>"; };
-		A10000000000000000000005 /* sample_cube_20mm.stl */ = {isa = PBXFileReference; lastKnownFileType = text; name = sample_cube_20mm.stl; path = sample_cube_20mm.stl; sourceTree = "<group>"; };
+		A10000000000000000000005 /* sample_cube_20mm.stl */ = {isa = PBXFileReference; lastKnownFileType = text; path = sample_cube_20mm.stl; sourceTree = "<group>"; };
 		A10000000000000000000006 /* OrcaSlicerLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = OrcaSlicerLogo.png; sourceTree = "<group>"; };
 		A10000000000000000000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A10000000000000000000008 /* PlateSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateSceneView.swift; sourceTree = "<group>"; };
 		A10000000000000000000009 /* process_0.20mm_Standard.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.20mm_Standard.json; sourceTree = "<group>"; };
+		A1000000000000000000000A /* process_0.16mm_Fine.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.16mm_Fine.json; sourceTree = "<group>"; };
 		F1BB315D151247B1B5CA362A /* OrcaSlicer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFrameworksBuildPhase section */
+		00528AFB96764BD5BFCD703F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
 /* Begin PBXGroup section */
-		C7F9A042109543268744B55D = {
+		55F78F21CB6A41E488E0167C /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				889503CD14A4413982553AF1,
-				A10000000000000000000005 /* sample_cube_20mm.stl */,
-				55F78F21CB6A41E488E0167C,
+				F1BB315D151247B1B5CA362A /* OrcaSlicer.app */,
 			);
+			name = Products;
 			sourceTree = "<group>";
 		};
-		889503CD14A4413982553AF1 = {
+		889503CD14A4413982553AF1 /* OrcaSlicerApp */ = {
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000001 /* OrcaSlicerApp.swift */,
@@ -49,16 +61,18 @@
 				A10000000000000000000006 /* OrcaSlicerLogo.png */,
 				A10000000000000000000007 /* Assets.xcassets */,
 				A10000000000000000000009 /* process_0.20mm_Standard.json */,
+				A1000000000000000000000A /* process_0.16mm_Fine.json */,
 			);
 			path = OrcaSlicerApp;
 			sourceTree = "<group>";
 		};
-		55F78F21CB6A41E488E0167C = {
+		C7F9A042109543268744B55D = {
 			isa = PBXGroup;
 			children = (
-				F1BB315D151247B1B5CA362A /* OrcaSlicer.app */,
+				889503CD14A4413982553AF1 /* OrcaSlicerApp */,
+				A10000000000000000000005 /* sample_cube_20mm.stl */,
+				55F78F21CB6A41E488E0167C /* Products */,
 			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -100,7 +114,7 @@
 				Base,
 			);
 			mainGroup = C7F9A042109543268744B55D;
-			productRefGroup = 55F78F21CB6A41E488E0167C;
+			productRefGroup = 55F78F21CB6A41E488E0167C /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -118,20 +132,11 @@
 				4E568A402B8B4376AB1A727A /* OrcaSlicerLogo.png in Resources */,
 				DDE238A458A9450191858168 /* Assets.xcassets in Resources */,
 				2FCF4FDFBF81444F9A5BCA77 /* process_0.20mm_Standard.json in Resources */,
+				B16F1E0016A00F1E0000001A /* process_0.16mm_Fine.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXFrameworksBuildPhase section */
-		00528AFB96764BD5BFCD703F /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5063836CBED846F29B8E26EB /* Sources */ = {
@@ -161,6 +166,124 @@
 			};
 			name = Debug;
 		};
+		502F8F3F2EA04E3ABAE89C0A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6PU4X4CG8B;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(SRCROOT)/../src/ios",
+					"$(inherited)",
+				);
+				INFOPLIST_FILE = OrcaSlicerApp/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(inherited)";
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(SRCROOT)/../build-ios-iphoneos-arm64/engine_bundle/lib",
+					"$(inherited)",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib",
+					"$(inherited)",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(SRCROOT)/../build-macos-headless-arm64/engine_bundle/lib",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 2.5.0;
+				OTHER_LDFLAGS = "$(inherited)";
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"-lorca_engine",
+					"-lc++",
+					"-lz",
+					"-liconv",
+					"-lexpat",
+					"-framework",
+					Foundation,
+					"-framework",
+					ModelIO,
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					SceneKit,
+					"-framework",
+					UIKit,
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"-lorca_engine",
+					"-lc++",
+					"-lz",
+					"-liconv",
+					"-lexpat",
+					"-framework",
+					Foundation,
+					"-framework",
+					ModelIO,
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					SceneKit,
+					"-framework",
+					UIKit,
+				);
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"$(inherited)",
+					"-lorca_engine",
+					"-lc++",
+					"-lz",
+					"-liconv",
+					"-lexpat",
+					"-framework",
+					Foundation,
+					"-framework",
+					ModelIO,
+					"-framework",
+					IOKit,
+					"-framework",
+					CoreFoundation,
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					SceneKit,
+					"-framework",
+					UIKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.orcaslicer.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = ORCA_LINKED;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = ORCA_LINKED;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx*]" = ORCA_LINKED;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "OrcaSlicerApp/Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,6";
+			};
+			name = Release;
+		};
 		8D71AC025D3C45B896A3FA5B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -183,7 +306,7 @@
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 6PU4X4CG8B;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
@@ -197,122 +320,100 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
+				LIBRARY_SEARCH_PATHS = "$(inherited)";
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(SRCROOT)/../build-ios-iphoneos-arm64/engine_bundle/lib",
+					"$(inherited)",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib",
+					"$(inherited)",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(SRCROOT)/../build-macos-headless-arm64/engine_bundle/lib",
 					"$(inherited)",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 2.5.0;
-				OTHER_LDFLAGS = (
+				OTHER_LDFLAGS = "$(inherited)";
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
 					"$(inherited)",
+					"-lorca_engine",
+					"-lc++",
+					"-lz",
+					"-liconv",
+					"-lexpat",
+					"-framework",
+					Foundation,
+					"-framework",
+					ModelIO,
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					SceneKit,
+					"-framework",
+					UIKit,
+				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"-lorca_engine",
+					"-lc++",
+					"-lz",
+					"-liconv",
+					"-lexpat",
+					"-framework",
+					Foundation,
+					"-framework",
+					ModelIO,
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					SceneKit,
+					"-framework",
+					UIKit,
+				);
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"$(inherited)",
+					"-lorca_engine",
+					"-lc++",
+					"-lz",
+					"-liconv",
+					"-lexpat",
+					"-framework",
+					Foundation,
+					"-framework",
+					ModelIO,
+					"-framework",
+					IOKit,
+					"-framework",
+					CoreFoundation,
+					"-framework",
+					Security,
+					"-framework",
+					SystemConfiguration,
+					"-framework",
+					SceneKit,
+					"-framework",
+					UIKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.orcaslicer.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = ORCA_LINKED;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = ORCA_LINKED;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx*]" = ORCA_LINKED;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "OrcaSlicerApp/Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,6";
-				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = (
-					"$(SRCROOT)/../build-macos-headless-arm64/engine_bundle/lib",
-					"$(inherited)",
-				);
-				"OTHER_LDFLAGS[sdk=macosx*]" = (
-					"$(inherited)",
-					"-lorca_engine -lc++ -lz -liconv -lexpat -framework Foundation -framework ModelIO -framework IOKit -framework CoreFoundation -framework Security -framework SystemConfiguration -framework SceneKit -framework UIKit",
-				);
-				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx*]" = "ORCA_LINKED";
-				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
-					"$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib",
-					"$(inherited)",
-				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"-lorca_engine -lc++ -lz -liconv -lexpat -framework Foundation -framework ModelIO -framework Security -framework SystemConfiguration -framework SceneKit -framework UIKit",
-				);
-				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = "ORCA_LINKED";
-				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
-					"$(SRCROOT)/../build-ios-iphoneos-arm64/engine_bundle/lib",
-					"$(inherited)",
-				);
-				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"-lorca_engine -lc++ -lz -liconv -lexpat -framework Foundation -framework ModelIO -framework Security -framework SystemConfiguration -framework SceneKit -framework UIKit",
-				);
-				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "ORCA_LINKED";
 			};
 			name = Debug;
-		};
-		502F8F3F2EA04E3ABAE89C0A /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = NO;
-				HEADER_SEARCH_PATHS = (
-					"$(SRCROOT)/../src/ios",
-					"$(inherited)",
-				);
-				INFOPLIST_FILE = OrcaSlicerApp/Info.plist;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-				);
-				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 2.5.0;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.orcaslicer.ios;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
-				SUPPORTS_MACCATALYST = NO;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "OrcaSlicerApp/Bridging-Header.h";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,6";
-				"LIBRARY_SEARCH_PATHS[sdk=macosx*]" = (
-					"$(SRCROOT)/../build-macos-headless-arm64/engine_bundle/lib",
-					"$(inherited)",
-				);
-				"OTHER_LDFLAGS[sdk=macosx*]" = (
-					"$(inherited)",
-					"-lorca_engine -lc++ -lz -liconv -lexpat -framework Foundation -framework ModelIO -framework IOKit -framework CoreFoundation -framework Security -framework SystemConfiguration -framework SceneKit -framework UIKit",
-				);
-				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx*]" = "ORCA_LINKED";
-				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
-					"$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib",
-					"$(inherited)",
-				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"-lorca_engine -lc++ -lz -liconv -lexpat -framework Foundation -framework ModelIO -framework Security -framework SystemConfiguration -framework SceneKit -framework UIKit",
-				);
-				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphonesimulator*]" = "ORCA_LINKED";
-				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
-					"$(SRCROOT)/../build-ios-iphoneos-arm64/engine_bundle/lib",
-					"$(inherited)",
-				);
-				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"-lorca_engine -lc++ -lz -liconv -lexpat -framework Foundation -framework ModelIO -framework Security -framework SystemConfiguration -framework SceneKit -framework UIKit",
-				);
-				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "ORCA_LINKED";
-			};
-			name = Release;
 		};
 /* End XCBuildConfiguration section */
 

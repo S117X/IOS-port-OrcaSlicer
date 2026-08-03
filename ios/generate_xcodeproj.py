@@ -25,7 +25,7 @@ def uid():
 IDs = {k: uid() for k in [
     "project", "target", "sources", "resources", "frameworks", "product",
     "swift_app", "swift_engine", "swift_plate", "sample_stl", "logo", "assets",
-    "process_profile", "scenekit_fw",
+    "process_profile", "process_profile_fine", "scenekit_fw",
     "config_list_proj", "config_list_tgt",
     "debug_proj", "release_proj", "debug_tgt", "release_tgt",
     "group_main", "group_app", "group_products",
@@ -166,6 +166,7 @@ pbx = f'''// !$*UTF8*$!
 		{IDs["logo"]} /* OrcaSlicerLogo.png in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000006 /* OrcaSlicerLogo.png */; }};
 		{IDs["assets"]} /* Assets.xcassets in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; }};
 		{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; }};
+		{IDs["process_profile_fine"]} /* process_0.16mm_Fine.json in Resources */ = {{isa = PBXBuildFile; fileRef = A1000000000000000000000A /* process_0.16mm_Fine.json */; }};
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -178,6 +179,7 @@ pbx = f'''// !$*UTF8*$!
 		A10000000000000000000007 /* Assets.xcassets */ = {{isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; }};
 		A10000000000000000000008 /* PlateSceneView.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateSceneView.swift; sourceTree = "<group>"; }};
 		A10000000000000000000009 /* process_0.20mm_Standard.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.20mm_Standard.json; sourceTree = "<group>"; }};
+		A1000000000000000000000A /* process_0.16mm_Fine.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.16mm_Fine.json; sourceTree = "<group>"; }};
 		{IDs["product"]} /* OrcaSlicer.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; }};
 /* End PBXFileReference section */
 
@@ -202,6 +204,7 @@ pbx = f'''// !$*UTF8*$!
 				A10000000000000000000006 /* OrcaSlicerLogo.png */,
 				A10000000000000000000007 /* Assets.xcassets */,
 				A10000000000000000000009 /* process_0.20mm_Standard.json */,
+				A1000000000000000000000A /* process_0.16mm_Fine.json */,
 			);
 			path = OrcaSlicerApp;
 			sourceTree = "<group>";
@@ -271,6 +274,7 @@ pbx = f'''// !$*UTF8*$!
 				{IDs["logo"]} /* OrcaSlicerLogo.png in Resources */,
 				{IDs["assets"]} /* Assets.xcassets in Resources */,
 				{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */,
+				{IDs["process_profile_fine"]} /* process_0.16mm_Fine.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};

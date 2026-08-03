@@ -23,9 +23,12 @@
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/Format/3mf.hpp"
+#include "libslic3r/libslic3r_version.h"
 
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <vector>
 #include <cmath>
 #include <functional>
@@ -42,6 +45,11 @@ struct orca_session {
     bool        has_config{false};
     orca_progress_fn progress_fn{nullptr};
     void *      progress_user{nullptr};
+    // Last slice stats (from GCodeProcessorResult)
+    bool        has_slice_stats{false};
+    float       last_time_sec{0.f};
+    float       last_filament_mm3{0.f};
+    int         last_layers{0};
 
     void set_error(const std::string &e) { last_error = e; }
     void clear_error() { last_error.clear(); }
@@ -89,7 +97,7 @@ void orca_session_destroy(orca_session_t *s)
     delete s;
 }
 
-int orca_session_load_model(orca_session_t *s, const char *path)
+static int load_model_impl(orca_session_t *s, const char *path, bool append)
 {
     if (!s || !path)
         return -1;
@@ -97,35 +105,67 @@ int orca_session_load_model(orca_session_t *s, const char *path)
     try {
         DynamicPrintConfig  file_config;
         ConfigSubstitutionContext substitutions(ForwardCompatibilitySubstitutionRule::EnableSilent);
-        s->model = Model::read_from_file(
+        Model incoming = Model::read_from_file(
             std::string(path),
             &file_config,
             &substitutions,
             LoadStrategy::AddDefaultInstances);
-        if (s->model.objects.empty()) {
+        if (incoming.objects.empty()) {
             s->set_error("Model has no objects after load");
-            s->has_model = false;
+            if (!append) {
+                s->has_model = false;
+            }
             return -2;
         }
-        // Merge any config embedded in 3MF into session config
         ensure_default_config(s);
         s->config.apply(file_config);
-        // Place objects on bed for print/preview
+
+        if (!append) {
+            s->model = std::move(incoming);
+        } else {
+            // Add objects onto existing plate (official Model::add_object)
+            for (ModelObject *obj : incoming.objects) {
+                if (!obj)
+                    continue;
+                ModelObject *added = s->model.add_object(*obj);
+                if (added) {
+                    for (ModelInstance *inst : added->instances) {
+                        if (inst)
+                            inst->set_offset(inst->get_offset() + Vec3d(12.0, 12.0, 0.0));
+                    }
+                    added->invalidate_bounding_box();
+                    added->ensure_on_bed();
+                }
+            }
+        }
         for (ModelObject *obj : s->model.objects) {
             if (obj)
                 obj->ensure_on_bed();
         }
-        s->has_model = true;
+        s->has_model = !s->model.objects.empty();
+        s->has_slice_stats = false;
         return 0;
     } catch (const std::exception &ex) {
         s->set_error(std::string("load_model: ") + ex.what());
-        s->has_model = false;
+        if (!append)
+            s->has_model = false;
         return -3;
     } catch (...) {
         s->set_error("load_model: unknown error");
-        s->has_model = false;
+        if (!append)
+            s->has_model = false;
         return -3;
     }
+}
+
+int orca_session_load_model(orca_session_t *s, const char *path)
+{
+    return load_model_impl(s, path, false);
+}
+
+int orca_session_add_model(orca_session_t *s, const char *path)
+{
+    return load_model_impl(s, path, true);
 }
 
 int orca_session_load_config(orca_session_t *s, const char *config_path)
@@ -224,6 +264,25 @@ int orca_session_slice_to_gcode(orca_session_t *s, const char *gcode_out_path)
         if (out.empty()) {
             s->set_error("export_gcode returned empty path");
             return -4;
+        }
+        // Capture official GCodeProcessor statistics for UI
+        s->has_slice_stats = true;
+        s->last_time_sec = result.print_statistics.modes[
+            static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+        double vol = 0.0;
+        for (const auto &kv : result.print_statistics.model_volumes_per_extruder)
+            vol += kv.second;
+        s->last_filament_mm3 = float(vol);
+        // Layer count estimate from model height / layer_height
+        s->last_layers = 0;
+        try {
+            BoundingBoxf3 bb = s->model.bounding_box_exact();
+            double lh = 0.2;
+            if (const ConfigOptionFloat *opt = s->config.option<ConfigOptionFloat>("layer_height"))
+                lh = opt->value > 1e-6 ? opt->value : 0.2;
+            s->last_layers = std::max(1, int(std::ceil(bb.size().z() / lh)));
+        } catch (...) {
+            s->last_layers = 0;
         }
         s->report_progress(100, "Done");
         return 0;
@@ -619,6 +678,70 @@ int orca_session_bed_size(orca_session_t *s, float *width, float *depth, float *
     }
 }
 
+int orca_session_set_printable_area(
+    orca_session_t *s, float width, float depth, float height)
+{
+    if (!s || width <= 0.f || depth <= 0.f || height <= 0.f)
+        return -1;
+    s->clear_error();
+    try {
+        ensure_default_config(s);
+        // Rectangular bed polygon: SW, SE, NE, NW (same convention as CLI / Swift setBedSize)
+        char area[128];
+        std::snprintf(area, sizeof(area), "0x0,%.6gx0,%.6gx%.6g,0x%.6g",
+                      double(width), double(width), double(depth), double(depth));
+        s->config.set_deserialize_strict("printable_area", area);
+        char hbuf[64];
+        std::snprintf(hbuf, sizeof(hbuf), "%.6g", double(height));
+        s->config.set_deserialize_strict("printable_height", hbuf);
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("set_printable_area: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("set_printable_area: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_model_info(
+    orca_session_t *s, int *object_count, float *volume_mm3)
+{
+    if (!s)
+        return -1;
+    if (!s->has_model || s->model.objects.empty()) {
+        if (object_count) *object_count = 0;
+        if (volume_mm3) *volume_mm3 = 0.f;
+        s->set_error("No model loaded");
+        return -1;
+    }
+    try {
+        if (object_count)
+            *object_count = int(s->model.objects.size());
+        if (volume_mm3) {
+            // Approximate solid volume (mm³) via libslic3r its_volume on instance-transformed meshes.
+            double vol = 0.0;
+            for (ModelObject *obj : s->model.objects) {
+                if (!obj) continue;
+                TriangleMesh mesh = obj->mesh();
+                float v = its_volume(mesh.its);
+                if (v <= 0.f && mesh.stats().volume > 0.f)
+                    v = mesh.stats().volume;
+                if (v > 0.f)
+                    vol += double(v);
+            }
+            *volume_mm3 = float(vol);
+        }
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("model_info: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("model_info: unknown error");
+        return -2;
+    }
+}
+
 int orca_session_duplicate_object(orca_session_t *s, int index)
 {
     if (!s || !s->has_model || index < 0 || index >= int(s->model.objects.size()))
@@ -712,6 +835,47 @@ int orca_session_export_object_mesh(
     }
 }
 
+int orca_session_save_3mf(orca_session_t *s, const char *path)
+{
+    if (!s || !path)
+        return -1;
+    s->clear_error();
+    if (!s->has_model) {
+        s->set_error("No model to save");
+        return -2;
+    }
+    try {
+        ensure_default_config(s);
+        // Official store_3mf(path, model, config, fullpath_sources, thumbnail, zip64)
+        bool ok = store_3mf(path, &s->model, &s->config, false, nullptr, true);
+        if (!ok) {
+            s->set_error("store_3mf failed");
+            return -3;
+        }
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("save_3mf: ") + ex.what());
+        return -4;
+    } catch (...) {
+        s->set_error("save_3mf: unknown error");
+        return -4;
+    }
+}
+
+int orca_session_last_slice_stats(
+    orca_session_t *s,
+    float *time_sec,
+    float *filament_mm3,
+    int *layers)
+{
+    if (!s || !s->has_slice_stats)
+        return -1;
+    if (time_sec) *time_sec = s->last_time_sec;
+    if (filament_mm3) *filament_mm3 = s->last_filament_mm3;
+    if (layers) *layers = s->last_layers;
+    return 0;
+}
+
 const char *orca_session_last_error(orca_session_t *s)
 {
     if (!s)
@@ -721,7 +885,8 @@ const char *orca_session_last_error(orca_session_t *s)
 
 const char *orca_version_string(void)
 {
-    return "OrcaSlicer-ios-port libslic3r-wrapper";
+    // Real Orca version from generated libslic3r_version.h + port tag
+    return "OrcaSlicer " SoftFever_VERSION " (iOS port · official libslic3r)";
 }
 
 } // extern "C"

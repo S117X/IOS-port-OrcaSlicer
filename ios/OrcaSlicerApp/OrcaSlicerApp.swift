@@ -40,7 +40,9 @@ private enum OrcaTheme {
 struct OrcaRootView: View {
     @StateObject private var engine = OrcaEngine()
     @State private var showImporter = false
+    @State private var importAppend = false
     @State private var showProcess = false
+    @State private var projectURL: URL?
     @State private var layerHeight = "0.20"
     @State private var infill = "15"
     @State private var walls = "2"
@@ -175,8 +177,10 @@ struct OrcaRootView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(mainTab == .preview ? "Preview · drag orbit · pinch zoom" : "Prepare · drag orbit · pinch zoom")
                 .font(.system(size: 11, weight: .semibold))
+            Text(String(format: "Bed %.0f×%.0f×%.0f mm", engine.bedSize.x, engine.bedSize.y, engine.bedHeight))
+                .font(.system(size: 11, design: .monospaced))
             if engine.hasModel {
-                Text(engine.boundsText.isEmpty ? "1 object on plate" : engine.boundsText)
+                Text(engine.boundsText.isEmpty ? "\(engine.objectCount) object(s) on plate" : engine.boundsText)
                     .font(.system(size: 11, design: .monospaced))
             }
             if let name = engine.modelName {
@@ -399,7 +403,14 @@ struct OrcaRootView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 10) {
-                actionButton(title: "Open", systemImage: "folder.fill") { showImporter = true }
+                actionButton(title: "Open", systemImage: "folder.fill") {
+                    importAppend = false
+                    showImporter = true
+                }
+                actionButton(title: "Add", systemImage: "plus.rectangle.on.folder") {
+                    importAppend = true
+                    showImporter = true
+                }
                 actionButton(title: "Sample", systemImage: "cube.fill") {
                     status = engine.loadBundledSampleCube()
                     mainTab = .prepare
@@ -440,14 +451,21 @@ struct OrcaRootView: View {
             .buttonStyle(.plain)
             .disabled(!engine.hasModel || isSlicing)
 
+            if !engine.lastSliceStatsText.isEmpty {
+                Text(engine.lastSliceStatsText)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let gcode = engine.gcodeURL {
                 HStack(spacing: 10) {
                     Button {
                         mainTab = .preview
                         status = "G-code path preview — orbit to inspect toolpaths."
                     } label: {
-                        Label("Preview paths", systemImage: "eye")
-                            .font(.system(size: 14, weight: .semibold))
+                        Label("Preview", systemImage: "eye")
+                            .font(.system(size: 13, weight: .semibold))
                             .frame(maxWidth: .infinity)
                             .frame(height: 46)
                             .background(OrcaTheme.accent.opacity(0.18))
@@ -455,13 +473,46 @@ struct OrcaRootView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     ShareLink(item: gcode) {
-                        Label("Share", systemImage: "square.and.arrow.up")
-                            .font(.system(size: 14, weight: .semibold))
+                        Label("G-code", systemImage: "square.and.arrow.up")
+                            .font(.system(size: 13, weight: .semibold))
                             .frame(maxWidth: .infinity)
                             .frame(height: 46)
                             .background(OrcaTheme.success.opacity(0.18))
                             .foregroundStyle(OrcaTheme.success)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+            }
+
+            if engine.hasModel {
+                HStack(spacing: 10) {
+                    Button {
+                        if let url = engine.saveProject3MF() {
+                            projectURL = url
+                            status = engine.lastMessage
+                        } else {
+                            status = engine.lastMessage
+                        }
+                    } label: {
+                        Label("Save 3MF", systemImage: "doc.badge.arrow.up")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 42)
+                            .background(OrcaTheme.elevated)
+                            .foregroundStyle(OrcaTheme.text)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    if let projectURL {
+                        ShareLink(item: projectURL) {
+                            Label("Share project", systemImage: "square.and.arrow.up")
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 42)
+                                .background(OrcaTheme.accent.opacity(0.18))
+                                .foregroundStyle(OrcaTheme.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
                     }
                 }
             }
@@ -610,12 +661,43 @@ struct OrcaRootView: View {
     private var processSheet: some View {
         NavigationStack {
             List {
+                Section("Process profile") {
+                    ForEach(OrcaEngine.bundledProcessProfiles, id: \.id) { profile in
+                        Button {
+                            if engine.loadProcessProfile(profile.id) {
+                                syncProcessFieldsFromEngine()
+                                status = engine.lastMessage
+                            } else {
+                                status = engine.lastMessage
+                            }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(profile.title)
+                                        .foregroundStyle(OrcaTheme.text)
+                                    Text(profile.id + ".json")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(OrcaTheme.muted)
+                                }
+                                Spacer()
+                                if engine.activeProcessProfile == profile.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(OrcaTheme.accent)
+                                }
+                            }
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+                    }
+                }
                 Section("Objects on plate") {
                     if engine.hasModel {
                         labeled("File", engine.modelName ?? "—")
                         labeled("Count", "\(engine.objectCount)")
                         if !engine.boundsText.isEmpty {
                             labeled("Bounds", engine.boundsText)
+                        }
+                        if engine.modelVolumeMm3 > 0 {
+                            labeled("Volume", String(format: "%.1f mm³", engine.modelVolumeMm3))
                         }
                         if let mesh = engine.mesh {
                             labeled("Mesh", "\(mesh.vertexCount) verts · \(mesh.indices.count / 3) tris")
@@ -627,10 +709,16 @@ struct OrcaRootView: View {
                     }
                 }
                 Section("Printer / plate") {
-                    labeled("Bed", "\(Int(engine.bedSize.x)) × \(Int(engine.bedSize.y)) × \(Int(engine.bedHeight)) mm")
-                    labeled("Nozzle", "0.4 mm")
-                    labeled("Filament", "1.75 mm PLA")
-                    labeled("Profile", "process_0.20mm_Standard")
+                    labeled(
+                        "Bed",
+                        String(
+                            format: "%.0f × %.0f × %.0f mm",
+                            engine.bedSize.x, engine.bedSize.y, engine.bedHeight
+                        )
+                    )
+                    labeled("Nozzle", engine.getOption("nozzle_diameter").map { "\($0) mm" } ?? "0.4 mm")
+                    labeled("Filament", engine.getOption("filament_diameter").map { "\($0) mm" } ?? "1.75 mm")
+                    labeled("Active profile", engine.activeProcessProfile)
                     HStack(spacing: 8) {
                         bedPreset("220²", 220, 220)
                         bedPreset("256²", 256, 256)
@@ -776,7 +864,33 @@ struct OrcaRootView: View {
                         .foregroundStyle(OrcaTheme.accent)
                 }
             }
+            .onAppear {
+                engine.refreshBedSize()
+                syncProcessFieldsFromEngine()
+            }
         }
+    }
+
+    /// Pull key process options into sheet fields after profile load / open.
+    private func syncProcessFieldsFromEngine() {
+        if let v = engine.getOption("layer_height") { layerHeight = v }
+        if let v = engine.getOption("wall_loops") { walls = v }
+        if let v = engine.getOption("sparse_infill_density") {
+            infill = v.replacingOccurrences(of: "%", with: "")
+        }
+        if let v = engine.getOption("top_shell_layers") { topShells = v }
+        if let v = engine.getOption("bottom_shell_layers") { bottomShells = v }
+        if let v = engine.getOption("brim_type") { brimType = v }
+        if let v = engine.getOption("outer_wall_speed") { outerWallSpeed = v }
+        if let v = engine.getOption("sparse_infill_speed") { sparseSpeed = v }
+        if let v = engine.getOption("enable_support") {
+            supportOn = (v == "1" || v.lowercased() == "true")
+        }
+        if let v = engine.getOption("ironing") {
+            ironingOn = (v == "1" || v.lowercased() == "true")
+        }
+        if let v = engine.getOption("nozzle_temperature") { nozzleTemp = v }
+        if let v = engine.getOption("bed_temperature") { bedTemp = v }
     }
 
     private func labeled(_ title: String, _ value: String) -> some View {
@@ -791,13 +905,18 @@ struct OrcaRootView: View {
     private func bedPreset(_ title: String, _ w: Float, _ d: Float) -> some View {
         Button {
             engine.setBedSize(width: w, depth: d, height: engine.bedHeight)
+            engine.refreshBedSize()
             status = engine.lastMessage
         } label: {
             Text(title)
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
-                .background(OrcaTheme.elevated)
+                .background(
+                    abs(engine.bedSize.x - w) < 0.5 && abs(engine.bedSize.y - d) < 0.5
+                        ? OrcaTheme.accent.opacity(0.25)
+                        : OrcaTheme.elevated
+                )
                 .foregroundStyle(OrcaTheme.accent)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -857,7 +976,11 @@ struct OrcaRootView: View {
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
-            status = engine.loadModel(url: url)
+            if importAppend {
+                status = engine.addModel(url: url)
+            } else {
+                status = engine.loadModel(url: url)
+            }
             mainTab = .prepare
         case .failure(let err):
             status = err.localizedDescription

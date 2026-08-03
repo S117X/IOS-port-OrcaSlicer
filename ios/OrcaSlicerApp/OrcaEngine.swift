@@ -13,6 +13,10 @@ final class OrcaEngine: ObservableObject {
     @Published var hasModel = false
     @Published var gcodeURL: URL?
     @Published var lastMessage = ""
+    @Published var lastSliceTimeSec: Float = 0
+    @Published var lastSliceFilamentMm3: Float = 0
+    @Published var lastSliceLayers: Int = 0
+    @Published var lastSliceStatsText: String = ""
     @Published var mesh: MeshGeometry?
     @Published var gcodePathNode: SCNNode?
     @Published var gcodeGeometry: GCodePathGeometry?
@@ -22,10 +26,20 @@ final class OrcaEngine: ObservableObject {
     @Published var boundsText: String = ""
     @Published var bedSize: SIMD2<Float> = SIMD2(220, 220)
     @Published var bedHeight: Float = 250
+    /// Active bundled process profile resource name (without .json)
+    @Published var activeProcessProfile: String = "process_0.20mm_Standard"
+    /// Approximate solid volume from orca_session_model_info (mm³); 0 if unknown
+    @Published var modelVolumeMm3: Float = 0
     /// Layer scrubber: max Z shown in Preview (mm)
     @Published var previewMaxZ: Float = 100
     @Published var gcodeZMin: Float = 0
     @Published var gcodeZMax: Float = 20
+
+    /// Bundled process profiles shipped in app Resources
+    static let bundledProcessProfiles: [(id: String, title: String)] = [
+        ("process_0.20mm_Standard", "0.20 mm Standard"),
+        ("process_0.16mm_Fine", "0.16 mm Fine"),
+    ]
 
     private var session: OpaquePointer?
 
@@ -132,29 +146,47 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    /// Load bundled process JSON from app (process_0.20mm_Standard.json)
+    /// Load first available bundled process profile (Standard preferred, then Fine).
     func loadBundledProfileIfAvailable() {
-        #if ORCA_LINKED
-        guard let s = session else { return }
-        let candidates = [
-            "process_0.20mm_Standard",
+        let candidates = Self.bundledProcessProfiles.map(\.id) + [
             "0.20mm Standard",
+            "0.16mm Fine",
         ]
         for name in candidates {
-            if let url = Bundle.main.url(forResource: name, withExtension: "json") {
-                let rc = url.path.withCString { orca_session_load_config(s, $0) }
-                if rc == 0 {
-                    lastMessage = "Loaded process profile: \(name)"
-                    // Re-apply bed size after profile (profiles may omit printable_area)
-                    applyDefaultFFF()
-                    lastMessage = "Loaded process profile: \(name)"
-                    return
-                } else {
-                    let err = orca_session_last_error(s).map { String(cString: $0) } ?? "?"
-                    lastMessage = "Profile \(name) rc=\(rc): \(err)"
-                }
+            if loadProcessProfile(name) {
+                return
             }
         }
+    }
+
+    /// Load a bundled process JSON by resource name (no extension).
+    /// Re-applies bed defaults after load because process profiles omit printable_area.
+    @discardableResult
+    func loadProcessProfile(_ resourceName: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else { return false }
+        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "json") else {
+            return false
+        }
+        let rc = url.path.withCString { orca_session_load_config(s, $0) }
+        if rc == 0 {
+            // Preserve current bed if already set; otherwise apply FFF defaults including bed
+            let w = bedSize.x, d = bedSize.y, h = bedHeight
+            // Process profiles may wipe unrelated keys — reassert nozzle/filament + bed
+            _ = setOptionRaw("filament_diameter", "1.75")
+            _ = setOptionRaw("nozzle_diameter", "0.4")
+            setBedSize(width: w, depth: d, height: h)
+            activeProcessProfile = resourceName
+            // setBedSize updates lastMessage — restore profile load status
+            lastMessage = "Loaded process profile: \(resourceName)"
+            return true
+        } else {
+            let err = orca_session_last_error(s).map { String(cString: $0) } ?? "?"
+            lastMessage = "Profile \(resourceName) rc=\(rc): \(err)"
+            return false
+        }
+        #else
+        return false
         #endif
     }
 
@@ -167,6 +199,7 @@ final class OrcaEngine: ObservableObject {
             lastMessage = "load_config rc=\(rc): \(err)"
             return lastMessage
         }
+        refreshBedSize()
         lastMessage = "Loaded config \(url.lastPathComponent)"
         return lastMessage
         #else
@@ -182,10 +215,8 @@ final class OrcaEngine: ObservableObject {
         return lastMessage
     }
 
-    func loadModel(url: URL) -> String {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
+    /// Copy security-scoped URL into temp for the C engine.
+    private func copyToTemp(_ url: URL) -> URL? {
         let dest = FileManager.default.temporaryDirectory
             .appendingPathComponent(url.lastPathComponent)
         do {
@@ -193,31 +224,63 @@ final class OrcaEngine: ObservableObject {
                 try FileManager.default.removeItem(at: dest)
             }
             try FileManager.default.copyItem(at: url, to: dest)
+            return dest
         } catch {
             lastMessage = "Copy failed: \(error.localizedDescription)"
-            return lastMessage
+            return nil
         }
+    }
+
+    /// Load model, replacing the plate (default).
+    func loadModel(url: URL) -> String {
+        loadModel(url: url, append: false)
+    }
+
+    /// Add model onto the plate without clearing existing objects.
+    func addModel(url: URL) -> String {
+        loadModel(url: url, append: true)
+    }
+
+    func loadModel(url: URL, append: Bool) -> String {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+
+        guard let dest = copyToTemp(url) else { return lastMessage }
 
         #if ORCA_LINKED
         guard let s = session else {
             lastMessage = "No session"
             return lastMessage
         }
-        let rc = dest.path.withCString { orca_session_load_model(s, $0) }
+        let rc: Int32 = dest.path.withCString { path in
+            if append {
+                return orca_session_add_model(s, path)
+            } else {
+                return orca_session_load_model(s, path)
+            }
+        }
         if rc != 0 {
             let err = orca_session_last_error(s).map { String(cString: $0) } ?? "error"
-            lastMessage = "load_model rc=\(rc): \(err)"
-            hasModel = false
-            mesh = nil
+            lastMessage = "\(append ? "add" : "load")_model rc=\(rc): \(err)"
+            if !append {
+                hasModel = false
+                mesh = nil
+            }
             return lastMessage
         }
-        modelName = url.lastPathComponent
+        modelName = append
+            ? "\(objectCount + 1) objects · last \(url.lastPathComponent)"
+            : url.lastPathComponent
         hasModel = true
-        // Center on bed so cube appears on the plate grid
-        _ = orca_session_center_on_bed(s)
+        if !append {
+            _ = orca_session_center_on_bed(s)
+        } else {
+            _ = orca_session_arrange(s)
+        }
         refreshObjectList()
         refreshMesh()
         refreshBounds()
+        refreshModelInfo()
         refreshBedSize()
         gcodeURL = nil
         gcodePathNode = nil
@@ -295,6 +358,24 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
+    /// object count + optional volume via orca_session_model_info
+    func refreshModelInfo() {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else {
+            modelVolumeMm3 = 0
+            return
+        }
+        var count: Int32 = 0
+        var vol: Float = 0
+        if orca_session_model_info(s, &count, &vol) == 0 {
+            objectCount = Int(count)
+            modelVolumeMm3 = vol
+        } else {
+            modelVolumeMm3 = 0
+        }
+        #endif
+    }
+
     func setOption(_ key: String, value: String) {
         #if ORCA_LINKED
         guard let s = session else { return }
@@ -323,7 +404,7 @@ final class OrcaEngine: ObservableObject {
         let idx = Int32(index ?? selectedObjectIndex)
         let rc = orca_session_translate_object(s, idx, dx, dy, dz)
         if rc == 0 {
-            refreshMesh(); refreshBounds()
+            refreshMesh(); refreshBounds(); refreshModelInfo()
             lastMessage = String(format: "Moved Δ(%.1f, %.1f, %.1f) mm", dx, dy, dz)
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "translate failed"
@@ -337,7 +418,7 @@ final class OrcaEngine: ObservableObject {
         let idx = Int32(index ?? selectedObjectIndex)
         let rc = orca_session_rotate_object_z(s, idx, degrees)
         if rc == 0 {
-            refreshMesh(); refreshBounds()
+            refreshMesh(); refreshBounds(); refreshModelInfo()
             lastMessage = String(format: "Rotated Z %.0f°", degrees)
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "rotate failed"
@@ -351,7 +432,7 @@ final class OrcaEngine: ObservableObject {
         let idx = Int32(index ?? selectedObjectIndex)
         let rc = orca_session_scale_object(s, idx, factor)
         if rc == 0 {
-            refreshMesh(); refreshBounds()
+            refreshMesh(); refreshBounds(); refreshModelInfo()
             lastMessage = String(format: "Scaled ×%.2f", factor)
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "scale failed"
@@ -363,7 +444,7 @@ final class OrcaEngine: ObservableObject {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
         if orca_session_center_on_bed(s) == 0 {
-            refreshMesh(); refreshBounds()
+            refreshMesh(); refreshBounds(); refreshModelInfo()
             lastMessage = "Centered on bed"
         }
         #endif
@@ -373,7 +454,7 @@ final class OrcaEngine: ObservableObject {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
         if orca_session_arrange(s) == 0 {
-            refreshMesh(); refreshBounds()
+            refreshMesh(); refreshBounds(); refreshModelInfo()
             lastMessage = "Arranged objects on plate"
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "arrange failed"
@@ -390,7 +471,7 @@ final class OrcaEngine: ObservableObject {
             hasModel = true
             refreshObjectList()
             selectedObjectIndex = Int(rc)
-            refreshMesh(); refreshBounds()
+            refreshMesh(); refreshBounds(); refreshModelInfo()
             lastMessage = "Duplicated object → index \(rc)"
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "duplicate failed"
@@ -411,10 +492,11 @@ final class OrcaEngine: ObservableObject {
                 modelName = nil
                 objectNames = []
                 objectCount = 0
+                modelVolumeMm3 = 0
                 lastMessage = "Plate empty"
             } else {
                 refreshObjectList()
-                refreshMesh(); refreshBounds()
+                refreshMesh(); refreshBounds(); refreshModelInfo()
                 lastMessage = "Deleted object \(idx)"
             }
         } else {
@@ -432,6 +514,7 @@ final class OrcaEngine: ObservableObject {
         modelName = nil
         objectNames = []
         objectCount = 0
+        modelVolumeMm3 = 0
         gcodeURL = nil
         gcodePathNode = nil
         gcodeGeometry = nil
@@ -439,15 +522,22 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    /// Common bed sizes (mm) — updates printable_area + printable_height
+    /// Common bed sizes (mm) — prefers orca_session_set_printable_area, falls back to options
     func setBedSize(width: Float, depth: Float, height: Float = 250) {
         #if ORCA_LINKED
-        let area = String(format: "0x0,%.0fx0,%.0fx%.0f,0x%.0f", width, width, depth, depth)
-        _ = setOptionRaw("printable_area", area)
-        _ = setOptionRaw("printable_height", String(format: "%.0f", height))
-        bedSize = SIMD2(width, depth)
-        bedHeight = height
-        lastMessage = String(format: "Bed %.0f×%.0f×%.0f mm", width, depth, height)
+        guard let s = session else { return }
+        let rc = orca_session_set_printable_area(s, width, depth, height)
+        if rc != 0 {
+            // Fallback for older engine binaries without set_printable_area
+            let area = String(format: "0x0,%.0fx0,%.0fx%.0f,0x%.0f", width, width, depth, depth)
+            _ = setOptionRaw("printable_area", area)
+            _ = setOptionRaw("printable_height", String(format: "%.0f", height))
+        }
+        refreshBedSize()
+        lastMessage = String(
+            format: "Bed %.0f×%.0f×%.0f mm",
+            bedSize.x, bedSize.y, bedHeight
+        )
         #endif
     }
 
@@ -508,6 +598,22 @@ final class OrcaEngine: ObservableObject {
             self.gcodeURL = out
             self.slicePercent = 100
             self.slicePhase = "Done"
+            var t: Float = 0, fil: Float = 0
+            var layers: Int32 = 0
+            if orca_session_last_slice_stats(s, &t, &fil, &layers) == 0 {
+                self.lastSliceTimeSec = t
+                self.lastSliceFilamentMm3 = fil
+                self.lastSliceLayers = Int(layers)
+                let mins = Int(t) / 60
+                let secs = Int(t) % 60
+                let grams = fil * 0.00124 // approx PLA density g/mm³
+                self.lastSliceStatsText = String(
+                    format: "~%dm %02ds · %.1f g filament · %d layers",
+                    mins, secs, grams, Int(layers)
+                )
+            } else {
+                self.lastSliceStatsText = ""
+            }
             if let path = GCodePathGeometry.parse(url: out) {
                 self.gcodeGeometry = path
                 self.gcodeZMin = path.zMin
@@ -516,9 +622,35 @@ final class OrcaEngine: ObservableObject {
                 self.applyPreviewLayer()
             }
         }
-        return "G-code written: \(out.lastPathComponent) (Print::export_gcode)"
+        let stats = await MainActor.run { self.lastSliceStatsText }
+        if stats.isEmpty {
+            return "G-code written: \(out.lastPathComponent) (Print::export_gcode)"
+        }
+        return "Sliced \(out.lastPathComponent) · \(stats)"
         #else
         return "Link orca_ios_api + libslic3r to slice"
+        #endif
+    }
+
+    /// Save plate + config as 3MF via official store_3mf.
+    func saveProject3MF() -> URL? {
+        #if ORCA_LINKED
+        guard let s = session, hasModel else {
+            lastMessage = "Nothing to save"
+            return nil
+        }
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("orcaslicer_project.3mf")
+        let rc = out.path.withCString { orca_session_save_3mf(s, $0) }
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "save_3mf failed"
+            return nil
+        }
+        lastMessage = "Saved \(out.lastPathComponent)"
+        return out
+        #else
+        lastMessage = "Not linked"
+        return nil
         #endif
     }
 }

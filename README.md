@@ -87,7 +87,14 @@ Upstream tree (`src/libslic3r`, `resources/`, `deps/`, …) is still the officia
 
 ## Build / run (summary)
 
-**Prereqs:** Xcode, CMake ≥ 3.13, large free disk for deps.
+**Branch:** [`ios-port`](https://github.com/S117X/IOS-port-OrcaSlicer/tree/ios-port).  
+**App icon:** 3D Orca (`Assets.xcassets/AppIcon`).  
+**Engines:** static `liborca_engine.a` for **iOS Simulator** and **physical device** (`iphoneos`) when built; Mac headless bundle for My Mac.
+
+**Full steps (Simulator + physical iPhone, signing, troubleshooting):**  
+→ **[`docs/RUN_ON_DEVICE.md`](docs/RUN_ON_DEVICE.md)**
+
+**Prereqs:** Xcode, Apple ID (for device), CMake ≥ 3.13, large free disk for deps.
 
 ```bash
 # 1) Mac headless engine + CLI (prove slice)
@@ -95,16 +102,21 @@ export PATH="$HOME/local/bin:$PATH"
 ./scripts/build_macos_headless_api.sh
 # then: build-macos-headless-*/src/ios/orca_slice_cli … sample_cube_20mm.stl out.gcode
 
-# 2) Bundle static engine for Xcode
+# 2) Bundle static engine for Xcode (Mac path)
 ./scripts/bundle_engine_libs.sh
 
 # 3) iOS Simulator deps + engine (long)
 ./scripts/build_ios_deps.sh iphonesimulator arm64
 ./scripts/build_ios_engine_after_deps.sh iphonesimulator arm64
 
+# 3b) Physical device deps + engine (long; arm64 iphoneos)
+./scripts/build_ios_deps.sh iphoneos arm64
+./scripts/build_ios_engine_after_deps.sh iphoneos arm64
+
 # 4) Open host app
 open ios/OrcaSlicer.xcodeproj
-# Destinations: My Mac and/or iPhone Simulator (ORCA_LINKED when engine libs exist)
+# Destinations: My Mac, iPhone Simulator, or connected iPhone
+# (ORCA_LINKED when the matching engine_bundle lib exists)
 ```
 
 Logs and local build dirs (`build-*`, `deps/build*`) are **not** published as the product; they are developer artifacts.

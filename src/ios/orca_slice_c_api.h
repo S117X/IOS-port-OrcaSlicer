@@ -30,8 +30,12 @@ ORCA_API void orca_session_destroy(orca_session_t *s);
 /**
  * Load model (STL/3MF path).
  * Implementation: Slic3r::Model::read_from_file
+ * @param append 0 = replace plate; nonzero = add objects onto existing plate
  */
 ORCA_API int orca_session_load_model(orca_session_t *s, const char *path);
+
+/** Same as load_model with append=1 (keep existing objects). */
+ORCA_API int orca_session_add_model(orca_session_t *s, const char *path);
 
 /**
  * Load config from official .json / .ini profile.
@@ -147,6 +151,22 @@ ORCA_API int orca_session_clear_model(orca_session_t *s);
 ORCA_API int orca_session_bed_size(orca_session_t *s, float *width, float *depth, float *height);
 
 /**
+ * Convenience: set rectangular printable area 0..w × 0..d and printable_height h (mm).
+ * Writes printable_area + printable_height into DynamicPrintConfig.
+ * @return 0 on success
+ */
+ORCA_API int orca_session_set_printable_area(
+    orca_session_t *s, float width, float depth, float height);
+
+/**
+ * Model summary for UI: object count and approximate solid volume (mm³).
+ * volume_mm3 may be NULL to skip volume (cheaper). Volume uses mesh stats / its_volume.
+ * @return 0 on success (has model); -1 if no model
+ */
+ORCA_API int orca_session_model_info(
+    orca_session_t *s, int *object_count, float *volume_mm3);
+
+/**
  * Duplicate object at index (clone + offset).
  * @return new object index, or <0 on error
  */
@@ -163,6 +183,26 @@ ORCA_API int orca_session_export_object_mesh(
     size_t *out_vertex_count,
     uint32_t **out_indices,
     size_t *out_index_count);
+
+/**
+ * Save project as 3MF (model + DynamicPrintConfig).
+ * Implementation: Slic3r::store_3mf
+ * @return 0 on success
+ */
+ORCA_API int orca_session_save_3mf(orca_session_t *s, const char *path);
+
+/**
+ * Stats from last successful slice (from GCodeProcessorResult).
+ * time_sec: estimated print time (normal mode)
+ * filament_mm3: total model extrusion volume (mm³)
+ * layers: estimated layer count from Z range / layer_height (0 if unknown)
+ * @return 0 if stats available
+ */
+ORCA_API int orca_session_last_slice_stats(
+    orca_session_t *s,
+    float *time_sec,
+    float *filament_mm3,
+    int *layers);
 
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
