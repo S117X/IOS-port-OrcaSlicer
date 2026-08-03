@@ -198,6 +198,12 @@ struct OrcaRootView: View {
     @State private var printerHost = "http://192.168.1.100"
     @State private var printerStatus = "Not connected"
     @State private var isConnecting = false
+    @State private var isJobBusy = false
+    @State private var lastUploadedFilename: String?
+    @State private var jobState = ""
+    @State private var jobProgress: Double = 0
+    @State private var jobMessage = ""
+    @State private var statusPollTask: Task<Void, Never>?
     @State private var nozzleTemp = "210"
     @State private var bedTemp = "60"
 
@@ -267,6 +273,79 @@ struct OrcaRootView: View {
                     .buttonStyle(.plain)
                 }
 
+                // Start / status / cancel (Moonraker print API)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Job")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OrcaTheme.muted)
+                    if !jobState.isEmpty {
+                        HStack {
+                            Text(jobState)
+                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(OrcaTheme.text)
+                            Spacer()
+                            Text(String(format: "%.0f%%", jobProgress * 100))
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(OrcaTheme.accent)
+                        }
+                        ProgressView(value: min(max(jobProgress, 0), 1))
+                            .tint(OrcaTheme.accent)
+                        if !jobMessage.isEmpty {
+                            Text(jobMessage)
+                                .font(.system(size: 11))
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                    } else if let name = lastUploadedFilename {
+                        Text("Ready: \(name)")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(OrcaTheme.muted)
+                    }
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await startMoonrakerPrint() }
+                        } label: {
+                            HStack {
+                                if isJobBusy { ProgressView().tint(.white) }
+                                Text("Start print")
+                                    .fontWeight(.bold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
+                            .background(canStartPrint ? OrcaTheme.accent : OrcaTheme.elevated.opacity(0.5))
+                            .foregroundStyle(canStartPrint ? .white : OrcaTheme.muted)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .disabled(!canStartPrint || isJobBusy)
+                        .buttonStyle(.plain)
+
+                        Button {
+                            Task { await cancelMoonrakerPrint() }
+                        } label: {
+                            Text("Cancel")
+                                .fontWeight(.bold)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(OrcaTheme.danger.opacity(0.2))
+                                .foregroundStyle(OrcaTheme.danger)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .disabled(isJobBusy)
+                        .buttonStyle(.plain)
+
+                        Button {
+                            Task { await refreshMoonrakerJobStatus() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 16, weight: .semibold))
+                                .frame(width: 44, height: 44)
+                                .background(OrcaTheme.elevated)
+                                .foregroundStyle(OrcaTheme.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Print temps")
                         .font(.system(size: 12, weight: .semibold))
@@ -291,6 +370,10 @@ struct OrcaRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(OrcaTheme.bg.opacity(0.96))
+    }
+
+    private var canStartPrint: Bool {
+        lastUploadedFilename != nil || engine.gcodeURL != nil
     }
 
     private func tempField(_ title: String, text: Binding<String>, apply: @escaping () -> Void) -> some View {
@@ -345,12 +428,16 @@ struct OrcaRootView: View {
         }
     }
 
+    private func moonrakerBaseURL() -> URL? {
+        URL(string: printerHost.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     private func uploadGCodeToMoonraker() async {
         guard let gcode = engine.gcodeURL else {
             printerStatus = "Slice first to produce G-code"
             return
         }
-        guard let base = URL(string: printerHost.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        guard let base = moonrakerBaseURL() else {
             printerStatus = "Invalid host URL"
             return
         }
@@ -379,15 +466,166 @@ struct OrcaRootView: View {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         req.httpBody = body
         do {
-            let (_, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await URLSession.shared.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if (200...299).contains(code) {
-                printerStatus = "Uploaded \(filename) → gcodes/"
+                // Prefer path returned by Moonraker; fall back to filename in gcodes/
+                var remoteName = filename
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let result = json["result"] as? [String: Any],
+                   let item = result["item"] as? [String: Any],
+                   let path = item["path"] as? String, !path.isEmpty {
+                    remoteName = path
+                }
+                lastUploadedFilename = remoteName
+                printerStatus = "Uploaded \(remoteName)"
+                jobMessage = "Upload OK — Start print when ready"
             } else {
                 printerStatus = "Upload failed HTTP \(code)"
             }
         } catch {
             printerStatus = "Upload error: \(error.localizedDescription)"
+        }
+    }
+
+    /// POST /printer/print/start?filename=
+    private func startMoonrakerPrint() async {
+        guard let base = moonrakerBaseURL() else {
+            printerStatus = "Invalid host URL"
+            return
+        }
+        var filename = lastUploadedFilename
+        if filename == nil, let gcode = engine.gcodeURL {
+            // Auto-upload then start
+            await uploadGCodeToMoonraker()
+            filename = lastUploadedFilename ?? gcode.lastPathComponent
+        }
+        guard let filename, !filename.isEmpty else {
+            printerStatus = "Upload G-code first"
+            return
+        }
+        isJobBusy = true
+        defer { isJobBusy = false }
+        var comps = URLComponents(
+            url: base.appendingPathComponent("printer/print/start"),
+            resolvingAgainstBaseURL: false
+        )
+        comps?.queryItems = [URLQueryItem(name: "filename", value: filename)]
+        guard let url = comps?.url else {
+            printerStatus = "Bad start URL"
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if (200...299).contains(code) {
+                jobState = "printing"
+                jobProgress = 0
+                jobMessage = "Started \(filename)"
+                printerStatus = "Print started · \(filename)"
+                startJobStatusPolling()
+            } else {
+                let errBody = String(data: data, encoding: .utf8) ?? ""
+                printerStatus = "Start failed HTTP \(code)"
+                jobMessage = errBody.isEmpty ? "HTTP \(code)" : String(errBody.prefix(160))
+            }
+        } catch {
+            printerStatus = "Start error: \(error.localizedDescription)"
+        }
+    }
+
+    /// POST /printer/print/cancel
+    private func cancelMoonrakerPrint() async {
+        guard let base = moonrakerBaseURL() else {
+            printerStatus = "Invalid host URL"
+            return
+        }
+        isJobBusy = true
+        defer { isJobBusy = false }
+        var req = URLRequest(url: base.appendingPathComponent("printer/print/cancel"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 10
+        do {
+            let (_, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if (200...299).contains(code) {
+                jobState = "cancelled"
+                jobMessage = "Print cancelled"
+                printerStatus = "Print cancelled"
+                statusPollTask?.cancel()
+                statusPollTask = nil
+            } else {
+                printerStatus = "Cancel failed HTTP \(code)"
+            }
+        } catch {
+            printerStatus = "Cancel error: \(error.localizedDescription)"
+        }
+    }
+
+    /// GET /printer/objects/query?print_stats&display_status
+    private func refreshMoonrakerJobStatus() async {
+        guard let base = moonrakerBaseURL() else { return }
+        var comps = URLComponents(
+            url: base.appendingPathComponent("printer/objects/query"),
+            resolvingAgainstBaseURL: false
+        )
+        // Moonraker accepts object names as query keys
+        comps?.queryItems = [
+            URLQueryItem(name: "print_stats", value: nil),
+            URLQueryItem(name: "display_status", value: nil),
+        ]
+        guard let url = comps?.url else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 8
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200...299).contains(code),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let result = json["result"] as? [String: Any],
+                  let statusObj = result["status"] as? [String: Any]
+            else {
+                if code != 0 { jobMessage = "Status HTTP \(code)" }
+                return
+            }
+            if let ps = statusObj["print_stats"] as? [String: Any] {
+                let state = (ps["state"] as? String) ?? ""
+                let fn = (ps["filename"] as? String) ?? ""
+                if !state.isEmpty { jobState = state }
+                if !fn.isEmpty { jobMessage = fn }
+            }
+            if let ds = statusObj["display_status"] as? [String: Any] {
+                if let p = ds["progress"] as? Double {
+                    jobProgress = p
+                } else if let p = ds["progress"] as? Int {
+                    jobProgress = Double(p)
+                }
+                if let msg = ds["message"] as? String, !msg.isEmpty {
+                    jobMessage = msg
+                }
+            }
+            if !jobState.isEmpty {
+                printerStatus = "Job · \(jobState) · \(String(format: "%.0f%%", jobProgress * 100))"
+            }
+        } catch {
+            jobMessage = error.localizedDescription
+        }
+    }
+
+    private func startJobStatusPolling() {
+        statusPollTask?.cancel()
+        statusPollTask = Task {
+            for _ in 0..<120 { // ~10 min at 5s
+                if Task.isCancelled { return }
+                await refreshMoonrakerJobStatus()
+                let done = ["complete", "cancelled", "error", "standby", "ready"]
+                    .contains(jobState.lowercased())
+                if done { return }
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
         }
     }
 
@@ -665,6 +903,7 @@ struct OrcaRootView: View {
     @State private var showPrinterPicker = false
     @State private var showProcessPicker = false
     @State private var showFilamentPicker = false
+    @State private var showAllSettings = false
 
     private var processSheet: some View {
         NavigationStack {
@@ -870,6 +1109,29 @@ struct OrcaRootView: View {
                         bedPreset("350²", 350, 350)
                     }
                     .listRowBackground(OrcaTheme.panel)
+                }
+                Section {
+                    Button {
+                        showAllSettings = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundStyle(OrcaTheme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("All settings")
+                                    .foregroundStyle(OrcaTheme.text)
+                                Text("Searchable full process / machine / filament keys")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(OrcaTheme.muted)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                } header: {
+                    Text("Full browser")
                 }
                 Section {
                     processField(title: "layer_height", unit: "mm", text: $layerHeight) {
@@ -1083,6 +1345,15 @@ struct OrcaRootView: View {
                     status = engine.lastMessage
                     showFilamentPicker = false
                 }
+            }
+            .sheet(isPresented: $showAllSettings) {
+                ProcessSettingsBrowser(engine: engine) {
+                    syncProcessFieldsFromEngine()
+                    status = engine.lastMessage
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .preferredColorScheme(.dark)
             }
         }
     }
@@ -1348,6 +1619,8 @@ struct OrcaRootView: View {
             } else {
                 status = engine.loadModel(url: url)
             }
+            // 3MF / profile-bearing loads refresh process sheet fields (config applied in engine)
+            syncProcessFieldsFromEngine()
             mainTab = .prepare
         case .failure(let err):
             status = err.localizedDescription

@@ -106,6 +106,31 @@ ORCA_API const char *orca_session_object_name(orca_session_t *s, int index);
 ORCA_API int orca_session_get_option(
     orca_session_t *s, const char *key, char *buf, size_t buf_len);
 
+/**
+ * Full settings browser: enumerate DynamicPrintConfig keys (sorted).
+ * Call after presets/options applied. Keys valid until next option_count/refresh.
+ */
+ORCA_API int orca_session_option_count(orca_session_t *s);
+ORCA_API const char *orca_session_option_key(orca_session_t *s, int index);
+
+/**
+ * Option metadata from official print_config_def.
+ * type_out: 0=bool 1=int 2=float 3=percent 4=string 5=enum 6=other
+ * Buffers may be NULL to skip. @return 0 on success
+ */
+ORCA_API int orca_session_option_info(
+    orca_session_t *s,
+    const char *key,
+    int *type_out,
+    char *label_buf, size_t label_len,
+    char *category_buf, size_t category_len,
+    char *sidetext_buf, size_t sidetext_len);
+
+/** Enum serialize keys / labels for coEnum options (from ConfigOptionDef). */
+ORCA_API int orca_session_option_enum_count(orca_session_t *s, const char *key);
+ORCA_API const char *orca_session_option_enum_value(orca_session_t *s, const char *key, int index);
+ORCA_API const char *orca_session_option_enum_label(orca_session_t *s, const char *key, int index);
+
 /** Center all objects on the printable bed (XY). */
 ORCA_API int orca_session_center_on_bed(orca_session_t *s);
 

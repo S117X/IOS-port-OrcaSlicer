@@ -3,7 +3,7 @@
 This file is the **source of truth** for whether the port is “done.”  
 The durable watcher / scheduler agent must re-evaluate these gates and keep building until **all** must-have gates pass.
 
-Last updated: 2026-08-02
+Last updated: 2026-08-02 (settings browser + Moonraker start/status + 3MF open)
 
 ## Philosophy
 
@@ -33,7 +33,7 @@ Last updated: 2026-08-02
 - [x] Correct keys (`ironing_type` not bool `ironing`)
 - [x] Scalar fields sync from engine after preset apply
 - [x] Multi-value temps/diameters take first value in UI; set accepts scalar
-- [ ] Searchable full settings browser for remaining keys
+- [x] Searchable full settings browser for remaining keys
 
 ### G4 — Prepare / objects
 - [x] Load / add model, basic transforms, clear plate
@@ -49,13 +49,13 @@ Last updated: 2026-08-02
 
 ### G6 — Device / send
 - [x] Moonraker connect + G-code upload
-- [ ] Start print + job status / cancel
+- [x] Start print + job status / cancel
 - [ ] OctoPrint or second host type
 
 ### G7 — Project
 - [x] Save 3MF
-- [ ] Open 3MF restores model + config
-- [ ] Share G-code via system share sheet
+- [x] Open 3MF restores model + config
+- [x] Share G-code via system share sheet
 
 ### G8 — Product quality
 - [ ] No crash on first-run full profile install

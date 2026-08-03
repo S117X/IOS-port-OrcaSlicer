@@ -73,6 +73,12 @@ struct orca_session {
     std::string selected_process_cache;
     std::string selected_filament_cache;
 
+    // Settings browser caches (keys / enum lists valid until next refresh)
+    std::vector<std::string> option_keys_cache;
+    std::vector<std::string> enum_values_cache;
+    std::vector<std::string> enum_labels_cache;
+    std::string enum_lookup_key;
+
     void set_error(const std::string &e) { last_error = e; }
     void clear_error() { last_error.clear(); }
     void report_progress(int pct, const char *msg) {
@@ -528,6 +534,219 @@ int orca_session_get_option(
     } catch (...) {
         s->set_error("get_option: unknown error");
         return -4;
+    }
+}
+
+static void refresh_option_keys_cache(orca_session_t *s)
+{
+    ensure_default_config(s);
+    s->option_keys_cache = s->config.keys();
+    std::sort(s->option_keys_cache.begin(), s->option_keys_cache.end());
+}
+
+static int map_option_type(ConfigOptionType t)
+{
+    // UI kinds: 0=bool 1=int 2=float 3=percent 4=string 5=enum 6=other
+    switch (t) {
+    case coBool:
+    case coBools:
+        return 0;
+    case coInt:
+    case coInts:
+        return 1;
+    case coFloat:
+    case coFloats:
+    case coPoint:
+    case coPoints:
+    case coPoint3:
+        return 2;
+    case coPercent:
+    case coPercents:
+    case coFloatOrPercent:
+    case coFloatsOrPercents:
+        return 3;
+    case coString:
+    case coStrings:
+        return 4;
+    case coEnum:
+    case coEnums:
+        return 5;
+    default:
+        return 6;
+    }
+}
+
+static const ConfigOptionDef *lookup_option_def(const char *key)
+{
+    if (!key || !*key)
+        return nullptr;
+    return print_config_def.get(std::string(key));
+}
+
+static void load_enum_lists(orca_session_t *s, const char *key)
+{
+    if (!s || !key)
+        return;
+    if (s->enum_lookup_key == key && !s->enum_values_cache.empty())
+        return;
+    s->enum_lookup_key = key;
+    s->enum_values_cache.clear();
+    s->enum_labels_cache.clear();
+    const ConfigOptionDef *def = lookup_option_def(key);
+    if (!def)
+        return;
+    // Prefer explicit enum_values (serialize keys). Labels optional.
+    if (!def->enum_values.empty()) {
+        s->enum_values_cache = def->enum_values;
+        if (def->enum_labels.size() == def->enum_values.size())
+            s->enum_labels_cache = def->enum_labels;
+        else
+            s->enum_labels_cache = def->enum_values;
+        return;
+    }
+    // Fallback: enum_keys_map (value string → int)
+    if (def->enum_keys_map) {
+        std::vector<std::pair<int, std::string>> ordered;
+        ordered.reserve(def->enum_keys_map->size());
+        for (const auto &kv : *def->enum_keys_map)
+            ordered.emplace_back(kv.second, kv.first);
+        std::sort(ordered.begin(), ordered.end());
+        for (const auto &p : ordered) {
+            s->enum_values_cache.push_back(p.second);
+            s->enum_labels_cache.push_back(p.second);
+        }
+    }
+}
+
+int orca_session_option_count(orca_session_t *s)
+{
+    if (!s)
+        return 0;
+    try {
+        refresh_option_keys_cache(s);
+        return (int)s->option_keys_cache.size();
+    } catch (...) {
+        return 0;
+    }
+}
+
+const char *orca_session_option_key(orca_session_t *s, int index)
+{
+    if (!s || index < 0)
+        return nullptr;
+    if (s->option_keys_cache.empty()) {
+        try {
+            refresh_option_keys_cache(s);
+        } catch (...) {
+            return nullptr;
+        }
+    }
+    if (index >= (int)s->option_keys_cache.size())
+        return nullptr;
+    return s->option_keys_cache[(size_t)index].c_str();
+}
+
+static void copy_str_buf(char *buf, size_t len, const std::string &src)
+{
+    if (!buf || len == 0)
+        return;
+    if (src.size() >= len) {
+        std::memcpy(buf, src.c_str(), len - 1);
+        buf[len - 1] = '\0';
+    } else {
+        std::memcpy(buf, src.c_str(), src.size() + 1);
+    }
+}
+
+int orca_session_option_info(
+    orca_session_t *s,
+    const char *key,
+    int *type_out,
+    char *label_buf, size_t label_len,
+    char *category_buf, size_t category_len,
+    char *sidetext_buf, size_t sidetext_len)
+{
+    if (!s || !key)
+        return -1;
+    try {
+        ensure_default_config(s);
+        const ConfigOptionDef *def = lookup_option_def(key);
+        int type = 6;
+        std::string label = key;
+        std::string category;
+        std::string sidetext;
+        if (def) {
+            type = map_option_type(def->type);
+            if (!def->label.empty())
+                label = def->label;
+            else if (!def->full_label.empty())
+                label = def->full_label;
+            category = def->category;
+            sidetext = def->sidetext;
+            // Open enum-style float/int combos still expose enum_values
+            if (type != 5 && !def->enum_values.empty())
+                type = 5;
+        } else {
+            // Infer from live option if def missing
+            if (const ConfigOption *opt = s->config.option(key))
+                type = map_option_type(opt->type());
+        }
+        if (type_out)
+            *type_out = type;
+        copy_str_buf(label_buf, label_len, label);
+        copy_str_buf(category_buf, category_len, category);
+        copy_str_buf(sidetext_buf, sidetext_len, sidetext);
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("option_info: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("option_info: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_option_enum_count(orca_session_t *s, const char *key)
+{
+    if (!s || !key)
+        return 0;
+    try {
+        load_enum_lists(s, key);
+        return (int)s->enum_values_cache.size();
+    } catch (...) {
+        return 0;
+    }
+}
+
+const char *orca_session_option_enum_value(orca_session_t *s, const char *key, int index)
+{
+    if (!s || !key || index < 0)
+        return nullptr;
+    try {
+        load_enum_lists(s, key);
+        if (index >= (int)s->enum_values_cache.size())
+            return nullptr;
+        return s->enum_values_cache[(size_t)index].c_str();
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+const char *orca_session_option_enum_label(orca_session_t *s, const char *key, int index)
+{
+    if (!s || !key || index < 0)
+        return nullptr;
+    try {
+        load_enum_lists(s, key);
+        if (index >= (int)s->enum_labels_cache.size()) {
+            // Fall back to value string
+            if (index < (int)s->enum_values_cache.size())
+                return s->enum_values_cache[(size_t)index].c_str();
+            return nullptr;
+        }
+        return s->enum_labels_cache[(size_t)index].c_str();
+    } catch (...) {
+        return nullptr;
     }
 }
 

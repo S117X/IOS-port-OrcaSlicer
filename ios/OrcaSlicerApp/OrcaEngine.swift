@@ -506,10 +506,12 @@ final class OrcaEngine: ObservableObject {
             ? "\(objectCount + 1) objects · last \(url.lastPathComponent)"
             : url.lastPathComponent
         hasModel = true
-        if !append {
-            _ = orca_session_center_on_bed(s)
-        } else {
+        let is3MF = url.pathExtension.lowercased() == "3mf"
+        // 3MF projects already store world transforms + print config — do not re-center.
+        if append {
             _ = orca_session_arrange(s)
+        } else if !is3MF {
+            _ = orca_session_center_on_bed(s)
         }
         refreshObjectList()
         refreshMesh()
@@ -519,7 +521,11 @@ final class OrcaEngine: ObservableObject {
         gcodeURL = nil
         gcodePathNode = nil
         gcodeGeometry = nil
-        lastMessage = "Loaded \(url.lastPathComponent) · \(objectCount) object(s) · mesh ready"
+        if is3MF && !append {
+            lastMessage = "Opened project \(url.lastPathComponent) · \(objectCount) object(s) · config restored"
+        } else {
+            lastMessage = "Loaded \(url.lastPathComponent) · \(objectCount) object(s) · mesh ready"
+        }
         return lastMessage
         #else
         modelName = url.lastPathComponent + " (engine not linked)"
@@ -790,7 +796,7 @@ final class OrcaEngine: ObservableObject {
     func getOption(_ key: String) -> String? {
         #if ORCA_LINKED
         guard let s = session else { return nil }
-        var buf = [CChar](repeating: 0, count: 512)
+        var buf = [CChar](repeating: 0, count: 4096)
         let rc = key.withCString { k in
             orca_session_get_option(s, k, &buf, buf.count)
         }
@@ -798,6 +804,89 @@ final class OrcaEngine: ObservableObject {
         return String(cString: buf)
         #else
         return nil
+        #endif
+    }
+
+    // MARK: - Full settings browser (print_config_def + session values)
+
+    /// Snapshot of every DynamicPrintConfig key for the searchable browser.
+    func allConfigOptions() -> [ConfigOptionEntry] {
+        #if ORCA_LINKED
+        guard let s = session else { return [] }
+        let n = Int(orca_session_option_count(s))
+        guard n > 0 else { return [] }
+        var out: [ConfigOptionEntry] = []
+        out.reserveCapacity(n)
+        for i in 0..<n {
+            guard let ck = orca_session_option_key(s, Int32(i)) else { continue }
+            let key = String(cString: ck)
+            var type: Int32 = 6
+            var labelBuf = [CChar](repeating: 0, count: 256)
+            var catBuf = [CChar](repeating: 0, count: 128)
+            var sideBuf = [CChar](repeating: 0, count: 64)
+            _ = key.withCString { k in
+                orca_session_option_info(
+                    s, k, &type,
+                    &labelBuf, labelBuf.count,
+                    &catBuf, catBuf.count,
+                    &sideBuf, sideBuf.count
+                )
+            }
+            let label = String(cString: labelBuf)
+            let category = String(cString: catBuf)
+            let sidetext = String(cString: sideBuf)
+            let value = getOption(key) ?? ""
+            var enums: [ProcessEnumChoice] = []
+            if type == 5 {
+                let ec = Int(key.withCString { orca_session_option_enum_count(s, $0) })
+                for j in 0..<ec {
+                    let vk = key.withCString { orca_session_option_enum_value(s, $0, Int32(j)) }
+                        .map { String(cString: $0) } ?? ""
+                    let lb = key.withCString { orca_session_option_enum_label(s, $0, Int32(j)) }
+                        .map { String(cString: $0) } ?? vk
+                    if !vk.isEmpty {
+                        enums.append(ProcessEnumChoice(key: vk, label: lb.isEmpty ? vk : lb))
+                    }
+                }
+            }
+            out.append(ConfigOptionEntry(
+                key: key,
+                label: label.isEmpty ? key : label,
+                category: category,
+                sidetext: sidetext,
+                type: ConfigOptionEntry.Kind(rawValue: Int(type)) ?? .other,
+                value: value,
+                enumChoices: enums
+            ))
+        }
+        return out
+        #else
+        return []
+        #endif
+    }
+
+    /// Apply option; returns true on success. Updates lastMessage with engine error text.
+    @discardableResult
+    func applyConfigOption(key: String, value: String) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else {
+            lastMessage = "No session"
+            return false
+        }
+        let rc = key.withCString { k in
+            value.withCString { v in
+                orca_session_set_option(s, k, v)
+            }
+        }
+        if rc == 0 {
+            lastMessage = "set \(key)=\(value)"
+            return true
+        }
+        lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "set failed"
+        return false
+        #else
+        lastMessage = "Not linked"
+        return false
         #endif
     }
 
