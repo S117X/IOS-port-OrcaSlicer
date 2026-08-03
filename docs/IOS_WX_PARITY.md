@@ -30,6 +30,13 @@ Status file: `docs/IOS_PORT_STATUS.json` field `wx_parity_percent`.
 | Support / seam / MMU / fuzzy paint | FacetsAnnotation via C API + paint gizmos |
 | Brim ears paint | `ModelObject::brim_points` C API + Brim ears gizmo |
 | Mesh boolean / simplify / plane cut | mcut boolean + quadric simplify + `cut_object_plane` |
+| Assembly explode / collapse | `orca_session_explode_objects` + Explode/Collapse chips |
+| Emboss lite (text plate) | `orca_session_add_box` named text plate + dimensions |
+| ConfigWizard first-run | Setup wizard sheet (language / region / vendors / last printer) |
+| Export preset bundle | Zip of `Documents/OrcaSlicer/user_presets` + ShareLink |
+| Print host queue history | UserDefaults history list on Device tab |
+| G-code clip plane | Min Z + Max Z scrubbers (SceneKit filter) |
+| Legend / feature colors | Color legend chips wall/infill/support/travel/other |
 
 ---
 
@@ -44,26 +51,26 @@ Status file: `docs/IOS_PORT_STATUS.json` field `wx_parity_percent`.
 
 ### W2 — Advanced mesh tools
 - [x] Advanced cut (non-horizontal plane via normal + point; connectors still open)
-- [ ] Assembly / multi-part explode
-- [ ] Emboss / text (`GLGizmoEmboss`)
+- [x] Assembly / multi-part explode (`orca_session_explode_objects` radial offset; Collapse restores baseline)
+- [x] Emboss / text lite (`orca_session_add_box` text plate; full font emboss still desktop-only)
 - [x] Mesh boolean union/diff/intersect UI (`orca_session_mesh_boolean` mcut)
 - [x] Simplify / remesh (`its_quadric_edge_collapse`)
 
 ### W3 — Desktop chrome
-- [ ] Full ConfigWizard first-run (language, region, printers select)
-- [ ] Export preset bundle dialog
+- [x] Full ConfigWizard first-run (language, region, printers/vendors select, last printer restore)
+- [x] Export preset bundle dialog (zip user_presets + ShareLink / activity sheet)
 - [ ] Auxiliary files / project media
 - [ ] Keyboard shortcut map
-- [ ] Print host queue history UI
+- [x] Print host queue history UI (Device tab; host+filename+date)
 
 ### W4 — Cloud / OEM (optional / policy)
 - [ ] Bambu network / login (if licensed for fork)
 - [ ] AMS mapping UI (hardware-dependent)
 
 ### W5 — Viewer polish
-- [ ] Desktop-grade GCodeViewer (toolpath height map, shell/infill layers)
-- [ ] Clipping plane
-- [ ] Legend / travel toggle parity complete
+- [x] Desktop-grade GCodeViewer lite (feature/height/speed color modes + layer clip)
+- [x] Clipping plane (min Z + max Z horizontal clip on toolpath geometry)
+- [x] Legend / travel toggle parity (color chips for wall/infill/support/travel/other)
 
 ---
 
@@ -74,4 +81,4 @@ wx_done = W1–W3 and W5 checked (W4 optional)
 status wx_parity_percent = 100
 ```
 
-W1 complete. Remaining: W2 explode/emboss, W3 chrome, W5 viewer polish.
+W1–W2 complete (emboss is lite text-plate). W3 mostly done (aux files / keyboard map open). W5 clip + legend done. W4 optional.

@@ -383,6 +383,27 @@ ORCA_API int orca_session_clone_grid(
     orca_session_t *s, int index, int nx, int ny, float spacing_mm);
 
 /**
+ * Explode / collapse assembly: offset each object from plate center along XY.
+ * factor: 0 = collapse (restore pre-explode offsets), 1 = default spacing,
+ *         >1 farther. spacing_mm: base radial step between objects (default 20).
+ * Stores pre-explode offsets on first non-zero factor; factor≈0 restores them.
+ * Radial offset for object i: factor * i * spacing_mm around bed center.
+ * @return 0 on success
+ */
+ORCA_API int orca_session_explode_objects(
+    orca_session_t *s, float factor, float spacing_mm);
+
+/**
+ * Add a rectangular box volume (text-plate / placeholder part).
+ * name: object name (also used as display label for emboss-lite "Text plate").
+ * size_x/y/z: dimensions in mm (clamped to ≥0.5). Placed near bed center on bed.
+ * @return new object index, or <0 on error
+ */
+ORCA_API int orca_session_add_box(
+    orca_session_t *s, const char *name,
+    float size_x, float size_y, float size_z);
+
+/**
  * Mesh health for object index (-1 = all combined).
  * open_edges == 0 ⇒ manifold. volume_mm3 may be NULL.
  */

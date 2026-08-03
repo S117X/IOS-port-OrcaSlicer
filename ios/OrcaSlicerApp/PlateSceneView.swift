@@ -843,20 +843,20 @@ struct GCodePathGeometry {
         return .other
     }
 
-    func filtered(maxZ: Float, enabledGroups: Set<FeatureGroup>? = nil) -> GCodePathGeometry {
+    func filtered(minZ: Float = -.greatestFiniteMagnitude, maxZ: Float, enabledGroups: Set<FeatureGroup>? = nil) -> GCodePathGeometry {
         var out: [Segment] = []
         for seg in segments {
             if let enabled = enabledGroups {
                 let g = Self.group(for: seg.feature)
                 if !enabled.contains(g) { continue }
             }
-            let pts = seg.points.filter { $0.z <= maxZ + 0.001 }
+            let pts = seg.points.filter { $0.z >= minZ - 0.001 && $0.z <= maxZ + 0.001 }
             if pts.count > 1 {
                 out.append(Segment(points: pts, feature: seg.feature, width: seg.width, feedrate: seg.feedrate))
             }
         }
         return GCodePathGeometry(
-            segments: out, zMin: zMin, zMax: maxZ,
+            segments: out, zMin: max(zMin, minZ), zMax: maxZ,
             feedMin: feedMin, feedMax: feedMax, defaultWidth: defaultWidth
         )
     }

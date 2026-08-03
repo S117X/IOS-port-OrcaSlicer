@@ -113,6 +113,11 @@ struct orca_session {
     std::vector<std::string> user_process_names;
     std::vector<std::string> user_filament_names;
 
+    // Assembly explode: per-object per-instance baseline offsets (world mm)
+    bool has_explode_baseline{false};
+    std::vector<std::vector<Vec3d>> explode_baseline_offsets;
+    float explode_factor_current{0.f};
+
     void refresh_name_caches() {
         printer_names.clear();
         process_names.clear();
@@ -2120,6 +2125,10 @@ int orca_session_clone_grid(orca_session_t *s, int index, int nx, int ny, float 
         } catch (...) {
             // arrange optional — grid offsets still valid
         }
+        // Object graph changed — invalidate explode baseline
+        s->has_explode_baseline = false;
+        s->explode_baseline_offsets.clear();
+        s->explode_factor_current = 0.f;
         return int(s->model.objects.size());
     } catch (const std::exception &ex) {
         s->set_error(std::string("clone_grid: ") + ex.what());
@@ -2127,6 +2136,187 @@ int orca_session_clone_grid(orca_session_t *s, int index, int nx, int ny, float 
     } catch (...) {
         s->set_error("clone_grid: unknown error");
         return -4;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W2: Assembly explode / collapse + emboss-lite text plate (box)
+// ---------------------------------------------------------------------------
+
+static void bed_center_xy(orca_session_t *s, double &bed_cx, double &bed_cy)
+{
+    bed_cx = 110.0;
+    bed_cy = 110.0;
+    if (!s) return;
+    if (const ConfigOptionPoints *pa = s->config.option<ConfigOptionPoints>("printable_area")) {
+        if (!pa->values.empty()) {
+            BoundingBoxf bedbb;
+            for (const Vec2d &p : pa->values)
+                bedbb.merge(Vec2d(p.x(), p.y()));
+            bed_cx = (bedbb.min.x() + bedbb.max.x()) * 0.5;
+            bed_cy = (bedbb.min.y() + bedbb.max.y()) * 0.5;
+        }
+    }
+}
+
+static void save_explode_baseline(orca_session_t *s)
+{
+    s->explode_baseline_offsets.clear();
+    s->explode_baseline_offsets.reserve(s->model.objects.size());
+    for (ModelObject *obj : s->model.objects) {
+        std::vector<Vec3d> inst_offs;
+        if (obj) {
+            inst_offs.reserve(obj->instances.size());
+            for (ModelInstance *inst : obj->instances) {
+                if (inst)
+                    inst_offs.push_back(inst->get_offset());
+                else
+                    inst_offs.push_back(Vec3d::Zero());
+            }
+        }
+        s->explode_baseline_offsets.push_back(std::move(inst_offs));
+    }
+    s->has_explode_baseline = true;
+}
+
+static void restore_explode_baseline(orca_session_t *s)
+{
+    if (!s->has_explode_baseline)
+        return;
+    const size_t n = std::min(s->model.objects.size(), s->explode_baseline_offsets.size());
+    for (size_t oi = 0; oi < n; ++oi) {
+        ModelObject *obj = s->model.objects[oi];
+        if (!obj) continue;
+        const auto &offs = s->explode_baseline_offsets[oi];
+        const size_t ni = std::min(obj->instances.size(), offs.size());
+        for (size_t ii = 0; ii < ni; ++ii) {
+            if (ModelInstance *inst = obj->instances[ii])
+                inst->set_offset(offs[ii]);
+        }
+        obj->invalidate_bounding_box();
+        obj->ensure_on_bed();
+    }
+    s->explode_factor_current = 0.f;
+}
+
+int orca_session_explode_objects(orca_session_t *s, float factor, float spacing_mm)
+{
+    if (!s || !s->has_model || s->model.objects.empty())
+        return -1;
+    s->clear_error();
+    try {
+        ensure_default_config(s);
+        const float spacing = spacing_mm > 0.f ? spacing_mm : 20.f;
+        const float f = factor;
+
+        // Collapse → restore baseline offsets
+        if (f <= 0.001f) {
+            if (s->has_explode_baseline)
+                restore_explode_baseline(s);
+            return 0;
+        }
+
+        // Save baseline on first explode (or when object count changed)
+        if (!s->has_explode_baseline
+            || s->explode_baseline_offsets.size() != s->model.objects.size()) {
+            // If re-exploding after partial edits with mismatched baseline, use current as new base
+            save_explode_baseline(s);
+        } else if (s->explode_factor_current > 0.001f) {
+            // Already exploded — restore first so we re-apply from original layout
+            restore_explode_baseline(s);
+            // restore clears factor; re-mark baseline still valid
+            s->has_explode_baseline = true;
+        }
+
+        double bed_cx = 110.0, bed_cy = 110.0;
+        bed_center_xy(s, bed_cx, bed_cy);
+
+        const size_t n = s->model.objects.size();
+        if (n == 0)
+            return 0;
+
+        for (size_t i = 0; i < n; ++i) {
+            ModelObject *obj = s->model.objects[i];
+            if (!obj || obj->instances.empty())
+                continue;
+
+            // Radial offset: factor * index * spacing around bed center
+            const double radius = double(f) * double(i) * double(spacing);
+            const double angle = (n > 1)
+                ? (2.0 * M_PI * double(i) / double(n))
+                : 0.0;
+            const double tx = bed_cx + radius * std::cos(angle);
+            const double ty = bed_cy + radius * std::sin(angle);
+
+            // Move first instance so object AABB center XY lands on (tx, ty)
+            ModelInstance *inst0 = obj->instances[0];
+            if (!inst0) continue;
+            obj->invalidate_bounding_box();
+            BoundingBoxf3 bb = obj->instance_bounding_box(0, /*dont_translate=*/false);
+            const Vec3d cur_c = bb.center();
+            const Vec3d delta(tx - cur_c.x(), ty - cur_c.y(), 0.0);
+            for (ModelInstance *inst : obj->instances) {
+                if (!inst) continue;
+                inst->set_offset(inst->get_offset() + delta);
+            }
+            obj->invalidate_bounding_box();
+            obj->ensure_on_bed();
+        }
+        s->explode_factor_current = f;
+        return 0;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("explode_objects: ") + ex.what());
+        return -2;
+    } catch (...) {
+        s->set_error("explode_objects: unknown error");
+        return -2;
+    }
+}
+
+int orca_session_add_box(
+    orca_session_t *s, const char *name,
+    float size_x, float size_y, float size_z)
+{
+    if (!s)
+        return -1;
+    s->clear_error();
+    try {
+        ensure_default_config(s);
+        const double sx = std::max(0.5, double(size_x > 0.f ? size_x : 40.f));
+        const double sy = std::max(0.5, double(size_y > 0.f ? size_y : 10.f));
+        const double sz = std::max(0.5, double(size_z > 0.f ? size_z : 2.f));
+        TriangleMesh mesh = make_cube(sx, sy, sz);
+        // Center cube on origin in XY, bottom on Z=0
+        mesh.translate(float(-sx * 0.5), float(-sy * 0.5), 0.f);
+
+        const char *obj_name = (name && name[0]) ? name : "Text plate";
+        ModelObject *obj = s->model.add_object(obj_name, "", std::move(mesh));
+        if (!obj) {
+            s->set_error("add_box: failed to create object");
+            return -2;
+        }
+        if (obj->instances.empty())
+            obj->add_instance();
+        // Place near bed center
+        double bed_cx = 110.0, bed_cy = 110.0;
+        bed_center_xy(s, bed_cx, bed_cy);
+        for (ModelInstance *inst : obj->instances) {
+            if (!inst) continue;
+            inst->set_offset(Vec3d(bed_cx, bed_cy, 0.0));
+        }
+        obj->invalidate_bounding_box();
+        obj->ensure_on_bed();
+        s->has_model = true;
+        s->has_explode_baseline = false;
+        s->explode_baseline_offsets.clear();
+        s->explode_factor_current = 0.f;
+        return int(s->model.objects.size()) - 1;
+    } catch (const std::exception &ex) {
+        s->set_error(std::string("add_box: ") + ex.what());
+        return -3;
+    } catch (...) {
+        s->set_error("add_box: unknown error");
+        return -3;
     }
 }
 

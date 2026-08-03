@@ -42,10 +42,13 @@ final class OrcaEngine: ObservableObject {
     @Published var activeProcessProfile: String = "process_0.20mm_Standard"
     /// Approximate solid volume from orca_session_model_info (mm³); 0 if unknown
     @Published var modelVolumeMm3: Float = 0
-    /// Layer scrubber: max Z shown in Preview (mm)
+    /// Layer scrubber: max/min Z shown in Preview (mm) — horizontal clip plane
     @Published var previewMaxZ: Float = 100
+    @Published var previewMinZ: Float = 0
     @Published var gcodeZMin: Float = 0
     @Published var gcodeZMax: Float = 20
+    /// Assembly explode factor (0 = collapsed layout)
+    @Published var explodeFactor: Float = 0
     /// Preview feature toggles (wall / infill / support / travel / other)
     @Published var previewShowWall = true
     @Published var previewShowInfill = true
@@ -95,6 +98,21 @@ final class OrcaEngine: ObservableObject {
     private let prefsProcessKey = "orca.lastProcess"
     private let prefsFilamentKey = "orca.lastFilament"
     private let prefsCompatKey = "orca.compatibleOnly"
+    static let prefsWizardDoneKey = "orca.configWizardDone"
+    static let prefsPreferredVendorsKey = "orca.preferredVendors"
+    static let prefsRegionKey = "orca.region"
+    static let prefsLanguageKey = "orca.language"
+    static let prefsJobHistoryKey = "orca.printHostJobHistory"
+
+    /// Print host job history entries (host + filename + date ISO8601)
+    struct JobHistoryEntry: Identifiable, Codable, Equatable {
+        var id: String { "\(date)|\(host)|\(filename)" }
+        var host: String
+        var filename: String
+        var date: String // ISO8601
+        var hostType: String
+    }
+    @Published var jobHistory: [JobHistoryEntry] = OrcaEngine.loadJobHistory()
 
     // MARK: Multi-plate (slot-based; each plate stores model+config as 3MF)
     @Published var plateCount: Int = 1
@@ -921,7 +939,7 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    /// Rebuild G-code SceneKit node from geometry filtered by previewMaxZ + feature toggles
+    /// Rebuild G-code SceneKit node from geometry filtered by min/max Z clip + feature toggles
     func applyPreviewLayer() {
         guard let geo = gcodeGeometry else {
             gcodePathNode = nil
@@ -933,7 +951,14 @@ final class OrcaEngine: ObservableObject {
         if previewShowSupport { groups.insert(.support) }
         if previewShowTravel { groups.insert(.travel) }
         if previewShowOther { groups.insert(.other) }
-        let filtered = geo.filtered(maxZ: previewMaxZ, enabledGroups: groups)
+        // Clamp min ≤ max
+        let lo = min(previewMinZ, previewMaxZ)
+        let hi = max(previewMinZ, previewMaxZ)
+        let filtered = geo.filtered(
+            minZ: lo,
+            maxZ: hi,
+            enabledGroups: groups
+        )
         #if canImport(UIKit)
         gcodePathNode = filtered.makeNode(
             color: UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1),
@@ -1154,6 +1179,67 @@ final class OrcaEngine: ObservableObject {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "arrange failed"
         }
         #endif
+    }
+
+    /// factor 0 = collapse, 1+ = explode (wx assembly explode lite)
+    func explode(factor: Float, spacingMm: Float = 25) {
+        _ = explodeObjects(factor: factor, spacingMm: spacingMm)
+    }
+
+    // MARK: Host job history (wx send queue lite)
+    private static let hostHistoryKey = "orca.host.jobHistory"
+    @Published var hostJobHistory: [String] = UserDefaults.standard.stringArray(forKey: OrcaEngine.hostHistoryKey) ?? []
+
+    func recordHostJob(host: String, file: String, hostType: String = "") {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) · \(host) · \(file)"
+        var h = hostJobHistory
+        h.insert(line, at: 0)
+        if h.count > 40 { h = Array(h.prefix(40)) }
+        hostJobHistory = h
+        UserDefaults.standard.set(h, forKey: Self.hostHistoryKey)
+        // Also structured history for Device tab detail
+        appendJobHistory(host: host, filename: file, hostType: hostType)
+    }
+
+    func clearHostJobHistory() {
+        hostJobHistory = []
+        UserDefaults.standard.removeObject(forKey: Self.hostHistoryKey)
+        clearJobHistory()
+    }
+
+    // MARK: First-run wizard prefs (language / region / vendors / last printer)
+    static let wizardDoneKey = "orca.wizard.done"
+    static var wizardCompleted: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: wizardDoneKey)
+                || UserDefaults.standard.bool(forKey: prefsWizardDoneKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: wizardDoneKey)
+            UserDefaults.standard.set(newValue, forKey: prefsWizardDoneKey)
+        }
+    }
+
+    static var preferredVendors: [String] {
+        get {
+            UserDefaults.standard.stringArray(forKey: prefsPreferredVendorsKey)
+                ?? UserDefaults.standard.stringArray(forKey: "orca.wizard.vendors")
+                ?? []
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: prefsPreferredVendorsKey)
+            UserDefaults.standard.set(newValue, forKey: "orca.wizard.vendors")
+        }
+    }
+
+    static var appLanguage: String {
+        get { UserDefaults.standard.string(forKey: prefsLanguageKey) ?? "en" }
+        set { UserDefaults.standard.set(newValue, forKey: prefsLanguageKey) }
+    }
+
+    static var appRegion: String {
+        get { UserDefaults.standard.string(forKey: prefsRegionKey) ?? "International" }
+        set { UserDefaults.standard.set(newValue, forKey: prefsRegionKey) }
     }
 
     var extruderCount: Int {
@@ -1650,6 +1736,7 @@ final class OrcaEngine: ObservableObject {
                 self.gcodeGeometry = path
                 self.gcodeZMin = path.zMin
                 self.gcodeZMax = max(path.zMax, path.zMin + 0.2)
+                self.previewMinZ = self.gcodeZMin
                 self.previewMaxZ = self.gcodeZMax
                 self.applyPreviewLayer()
             }
@@ -2309,4 +2396,247 @@ final class OrcaEngine: ObservableObject {
         return false
         #endif
     }
+
+    // MARK: - wx-parity W2: assembly explode + text plate (box)
+
+    /// Explode objects radially from bed center. factor 0 = collapse to saved layout.
+    @discardableResult
+    func explodeObjects(factor: Float, spacingMm: Float = 20) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session, hasModel, objectCount >= 1 else {
+            lastMessage = "Explode needs objects on plate"
+            return false
+        }
+        pushUndoSnapshot(label: factor <= 0.001 ? "collapse" : "explode")
+        let rc = orca_session_explode_objects(s, factor, spacingMm)
+        if rc != 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "explode failed"
+            return false
+        }
+        explodeFactor = max(0, factor)
+        refreshMesh()
+        refreshBounds()
+        refreshModelInfo()
+        if factor <= 0.001 {
+            lastMessage = "Collapsed assembly"
+        } else {
+            lastMessage = String(format: "Explode ×%.1f (spacing %.0f mm)", factor, spacingMm)
+        }
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    /// Emboss-lite: add a flat box volume named as a text plate (optional dimensions).
+    @discardableResult
+    func addTextPlate(
+        name: String = "Text plate",
+        sizeX: Float = 40,
+        sizeY: Float = 10,
+        sizeZ: Float = 2
+    ) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else { return false }
+        pushUndoSnapshot(label: "add-text-plate")
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = trimmed.isEmpty ? "Text plate" : trimmed
+        let rc = label.withCString {
+            orca_session_add_box(s, $0, sizeX, sizeY, sizeZ)
+        }
+        if rc < 0 {
+            lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "add_box failed"
+            return false
+        }
+        selectedObjectIndex = Int(rc)
+        explodeFactor = 0
+        refreshObjectList()
+        refreshMesh()
+        refreshBounds()
+        refreshModelInfo()
+        hasModel = objectCount > 0
+        lastMessage = "Added text plate \"\(label)\" \(String(format: "%.0f×%.0f×%.0f", sizeX, sizeY, sizeZ)) mm"
+        return true
+        #else
+        lastMessage = "Engine not linked"
+        return false
+        #endif
+    }
+
+    // MARK: - W3: preset bundle zip + job history
+
+    /// Documents/OrcaSlicer root
+    var dataDirectoryURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return docs.appendingPathComponent("OrcaSlicer", isDirectory: true)
+    }
+
+    var userPresetsDirectoryURL: URL {
+        dataDirectoryURL.appendingPathComponent("user_presets", isDirectory: true)
+    }
+
+    /// Zip Documents/OrcaSlicer/user_presets into a shareable archive (store-only ZIP).
+    func exportPresetBundleZip() -> URL? {
+        let src = userPresetsDirectoryURL
+        let fm = FileManager.default
+        try? fm.createDirectory(at: src, withIntermediateDirectories: true)
+        // Collect files under user_presets
+        guard let enumerator = fm.enumerator(at: src, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
+            lastMessage = "Cannot read user_presets"
+            return nil
+        }
+        var files: [(relative: String, url: URL)] = []
+        for case let url as URL in enumerator {
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue {
+                let rel = url.path.replacingOccurrences(of: src.path + "/", with: "")
+                if rel != url.path {
+                    files.append((rel, url))
+                } else {
+                    files.append((url.lastPathComponent, url))
+                }
+            }
+        }
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OrcaSlicer_user_presets_\(stamp).zip")
+        do {
+            if fm.fileExists(atPath: out.path) { try fm.removeItem(at: out) }
+            try OrcaZipWriter.writeStoreZip(files: files, to: out)
+            lastMessage = files.isEmpty
+                ? "Exported empty preset bundle (no user presets yet)"
+                : "Exported preset bundle · \(files.count) file(s)"
+            return out
+        } catch {
+            lastMessage = "Zip failed: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    static func loadJobHistory() -> [JobHistoryEntry] {
+        guard let data = UserDefaults.standard.data(forKey: prefsJobHistoryKey),
+              let list = try? JSONDecoder().decode([JobHistoryEntry].self, from: data) else {
+            return []
+        }
+        return list
+    }
+
+    func appendJobHistory(host: String, filename: String, hostType: String) {
+        let df = ISO8601DateFormatter()
+        let entry = JobHistoryEntry(
+            host: host,
+            filename: filename,
+            date: df.string(from: Date()),
+            hostType: hostType
+        )
+        var list = jobHistory
+        list.insert(entry, at: 0)
+        if list.count > 50 { list = Array(list.prefix(50)) }
+        jobHistory = list
+        if let data = try? JSONEncoder().encode(list) {
+            UserDefaults.standard.set(data, forKey: Self.prefsJobHistoryKey)
+        }
+    }
+
+    func clearJobHistory() {
+        jobHistory = []
+        UserDefaults.standard.removeObject(forKey: Self.prefsJobHistoryKey)
+    }
+}
+
+// MARK: - Minimal store-only ZIP writer (no compression) for preset bundle export
+
+enum OrcaZipWriter {
+    static func writeStoreZip(files: [(relative: String, url: URL)], to dest: URL) throws {
+        var central: [UInt8] = []
+        var local: [UInt8] = []
+        var offsets: [UInt32] = []
+
+        for (rel, url) in files {
+            let nameData = Array(rel.replacingOccurrences(of: "\\", with: "/").utf8)
+            let fileData = try Data(contentsOf: url)
+            let crc = crc32(fileData)
+            let size = UInt32(fileData.count)
+            let localOffset = UInt32(local.count)
+
+            // Local file header
+            local += u32(0x04034b50) // signature
+            local += u16(20) // version needed
+            local += u16(0) // flags
+            local += u16(0) // method store
+            local += u16(0) // time
+            local += u16(0) // date
+            local += u32(crc)
+            local += u32(size)
+            local += u32(size)
+            local += u16(UInt16(nameData.count))
+            local += u16(0) // extra
+            local += nameData
+            local += [UInt8](fileData)
+
+            offsets.append(localOffset)
+
+            // Central directory header
+            central += u32(0x02014b50)
+            central += u16(20) // version made by
+            central += u16(20) // version needed
+            central += u16(0)
+            central += u16(0)
+            central += u16(0)
+            central += u16(0)
+            central += u32(crc)
+            central += u32(size)
+            central += u32(size)
+            central += u16(UInt16(nameData.count))
+            central += u16(0)
+            central += u16(0) // comment
+            central += u16(0) // disk
+            central += u16(0) // int attr
+            central += u32(0) // ext attr
+            central += u32(localOffset)
+            central += nameData
+        }
+
+        let centralOffset = UInt32(local.count)
+        let centralSize = UInt32(central.count)
+        var out = local + central
+        // End of central directory
+        out += u32(0x06054b50)
+        out += u16(0)
+        out += u16(0)
+        out += u16(UInt16(files.count))
+        out += u16(UInt16(files.count))
+        out += u32(centralSize)
+        out += u32(centralOffset)
+        out += u16(0)
+        try Data(out).write(to: dest)
+    }
+
+    private static func u16(_ v: UInt16) -> [UInt8] {
+        [UInt8(v & 0xff), UInt8((v >> 8) & 0xff)]
+    }
+    private static func u32(_ v: UInt32) -> [UInt8] {
+        [UInt8(v & 0xff), UInt8((v >> 8) & 0xff), UInt8((v >> 16) & 0xff), UInt8((v >> 24) & 0xff)]
+    }
+
+    /// CRC-32 (ISO 3309 / PNG / ZIP)
+    private static func crc32(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xffff_ffff
+        for byte in data {
+            let idx = Int((crc ^ UInt32(byte)) & 0xff)
+            crc = (crc >> 8) ^ crcTable[idx]
+        }
+        return crc ^ 0xffff_ffff
+    }
+
+    private static let crcTable: [UInt32] = {
+        (0..<256).map { i -> UInt32 in
+            var c = UInt32(i)
+            for _ in 0..<8 {
+                c = (c & 1) != 0 ? (0xedb88320 ^ (c >> 1)) : (c >> 1)
+            }
+            return c
+        }
+    }()
 }

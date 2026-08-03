@@ -81,6 +81,16 @@ struct OrcaRootView: View {
     @State private var showPreferences = false
     @State private var showAbout = false
     @State private var showObjectSettings = false
+    @State private var presetBundleShareURL: URL?
+    @State private var textPlateName = "Text plate"
+    @State private var textPlateX = "40"
+    @State private var textPlateY = "10"
+    @State private var textPlateZ = "2"
+    @State private var explodeSpacing = "20"
+    @State private var showWizard = !OrcaEngine.wizardCompleted
+    @State private var wizardVendors: Set<String> = Set(OrcaEngine.preferredVendors)
+    @State private var wizardLanguage: String = OrcaEngine.appLanguage
+    @State private var wizardRegion: String = OrcaEngine.appRegion
     @State private var objLayerHeight = ""
     @State private var objWalls = ""
     @State private var objInfill = ""
@@ -176,6 +186,12 @@ struct OrcaRootView: View {
                 .presentationDragIndicator(.visible)
                 .preferredColorScheme(.dark)
         }
+        .sheet(isPresented: $showWizard) {
+            configWizardSheet
+                .presentationDetents([.large])
+                .interactiveDismissDisabled(!OrcaEngine.wizardCompleted)
+                .preferredColorScheme(.dark)
+        }
         .sheet(isPresented: $showPreferences) {
             preferencesSheet
                 .presentationDetents([.medium, .large])
@@ -190,6 +206,15 @@ struct OrcaRootView: View {
             objectSettingsSheet
                 .presentationDetents([.medium, .large])
                 .preferredColorScheme(.dark)
+        }
+        .onAppear {
+            if !OrcaEngine.wizardCompleted {
+                showWizard = true
+            }
+            // Restore preferred vendors into wizard multi-select when reopening
+            if wizardVendors.isEmpty {
+                wizardVendors = Set(OrcaEngine.preferredVendors)
+            }
         }
         .fileImporter(
             isPresented: $showImporter,
@@ -263,6 +288,7 @@ struct OrcaRootView: View {
                     showObjectSettings = true
                 }
                 .disabled(!engine.hasModel || engine.selectedObjectIndex < 0)
+                Button("Setup wizard…") { showWizard = true }
                 Button("Preferences…") { showPreferences = true }
                 Button("About OrcaSlicer…") { showAbout = true }
             } label: {
@@ -671,6 +697,43 @@ struct OrcaRootView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Print host job history")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OrcaTheme.muted)
+                        Spacer()
+                        if !engine.hostJobHistory.isEmpty {
+                            Button("Clear") {
+                                engine.clearHostJobHistory()
+                            }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OrcaTheme.danger)
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if engine.hostJobHistory.isEmpty {
+                        Text("Uploads and sends appear here (host · file · date).")
+                            .font(.system(size: 11))
+                            .foregroundStyle(OrcaTheme.muted)
+                    } else {
+                        ForEach(engine.hostJobHistory.prefix(12), id: \.self) { line in
+                            Text(line)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(OrcaTheme.muted)
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(OrcaTheme.elevated)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(OrcaTheme.panel.opacity(0.9))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 8) {
                     Text("Print temps")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(OrcaTheme.muted)
@@ -900,6 +963,7 @@ struct OrcaRootView: View {
                 lastUploadedFilename = remoteName
                 printerStatus = "Uploaded \(remoteName)"
                 jobMessage = "Upload OK — Start print when ready"
+                engine.recordHostJob(host: self.printerHost, file: remoteName, hostType: "Moonraker")
             } else {
                 printerStatus = "Upload failed HTTP \(code)"
             }
@@ -1352,6 +1416,11 @@ struct OrcaRootView: View {
                 lastUploadedFilename = remoteName
                 printerStatus = "OctoPrint uploaded \(remoteName)"
                 jobMessage = "Upload OK — Start print when ready"
+                engine.recordHostJob(
+                    host: self.printerHost,
+                    file: remoteName,
+                    hostType: hostType.rawValue
+                )
             } else if code == 403 {
                 printerStatus = "Upload 403 — check API key"
             } else {
@@ -1804,6 +1873,35 @@ struct OrcaRootView: View {
                     engine.pushUndoSnapshot(label: "arrange")
                     engine.arrange(); status = engine.lastMessage
                 }
+                toolChip(
+                    engine.explodeFactor > 0.001 ? "Collapse" : "Explode",
+                    engine.explodeFactor > 0.001
+                        ? "arrow.down.forward.and.arrow.up.backward"
+                        : "arrow.up.backward.and.arrow.down.forward",
+                    selected: engine.explodeFactor > 0.001
+                ) {
+                    let sp = Float(explodeSpacing) ?? 20
+                    if engine.explodeFactor > 0.001 {
+                        engine.explode(factor: 0, spacingMm: sp)
+                    } else {
+                        engine.explode(factor: 1.2, spacingMm: sp)
+                    }
+                    status = engine.lastMessage
+                }
+                if engine.explodeFactor > 0.001 {
+                    toolChip("Explode+", "plus.magnifyingglass") {
+                        let sp = Float(explodeSpacing) ?? 20
+                        engine.explode(factor: engine.explodeFactor + 0.5, spacingMm: sp)
+                        status = engine.lastMessage
+                    }
+                }
+                toolChip("Text plate", "textformat") {
+                    let sx = Float(textPlateX) ?? 40
+                    let sy = Float(textPlateY) ?? 10
+                    let sz = Float(textPlateZ) ?? 2
+                    _ = engine.addTextPlate(name: textPlateName, sizeX: sx, sizeY: sy, sizeZ: sz)
+                    status = engine.lastMessage
+                }
                 toolChip("Orient", "arrow.up.and.down.and.arrow.left.and.right") {
                     engine.autoOrient(); status = engine.lastMessage
                 }
@@ -2058,6 +2156,93 @@ struct OrcaRootView: View {
         objExtruder = engine.getObjectOption(index: idx, key: "extruder") ?? "0"
     }
 
+    private var configWizardSheet: some View {
+        NavigationStack {
+            List {
+                Section("Welcome") {
+                    Text("First-run setup (desktop ConfigWizard lite). Language, region, preferred vendors, and last printer are stored in UserDefaults.")
+                        .font(.footnote)
+                        .foregroundStyle(OrcaTheme.muted)
+                        .listRowBackground(OrcaTheme.panel)
+                }
+                Section("Language") {
+                    Picker("Language", selection: $wizardLanguage) {
+                        Text("English").tag("en")
+                        Text("中文").tag("zh")
+                        Text("Deutsch").tag("de")
+                        Text("Français").tag("fr")
+                        Text("Español").tag("es")
+                        Text("日本語").tag("ja")
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                }
+                Section("Region") {
+                    Picker("Region", selection: $wizardRegion) {
+                        Text("International").tag("International")
+                        Text("North America").tag("North America")
+                        Text("Europe").tag("Europe")
+                        Text("China").tag("China")
+                        Text("Japan").tag("Japan")
+                        Text("Other").tag("Other")
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                }
+                Section("Preferred vendors (multi-select)") {
+                    if engine.vendorList.isEmpty {
+                        Text(engine.presetsLoading ? "Loading profiles…" : "Profiles load after Continue — you can re-open Setup anytime.")
+                            .foregroundStyle(OrcaTheme.muted)
+                            .listRowBackground(OrcaTheme.panel)
+                    } else {
+                        ForEach(engine.vendorList.prefix(60), id: \.self) { v in
+                            Button {
+                                if wizardVendors.contains(v) { wizardVendors.remove(v) }
+                                else { wizardVendors.insert(v) }
+                            } label: {
+                                HStack {
+                                    Text(v).foregroundStyle(OrcaTheme.text)
+                                    Spacer()
+                                    if wizardVendors.contains(v) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(OrcaTheme.accent)
+                                    }
+                                }
+                            }
+                            .listRowBackground(OrcaTheme.panel)
+                        }
+                    }
+                }
+                if !engine.selectedPrinter.isEmpty {
+                    Section("Last printer") {
+                        labeled("Restored", engine.selectedPrinter)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrcaTheme.bg)
+            .navigationTitle("Setup wizard")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Continue") {
+                        OrcaEngine.appLanguage = wizardLanguage
+                        OrcaEngine.appRegion = wizardRegion
+                        OrcaEngine.preferredVendors = Array(wizardVendors).sorted()
+                        OrcaEngine.wizardCompleted = true
+                        showWizard = false
+                        status = "Setup saved · \(wizardVendors.count) vendor(s) preferred"
+                    }
+                    .fontWeight(.semibold)
+                    .foregroundStyle(OrcaTheme.accent)
+                }
+            }
+            .task {
+                if engine.vendorList.isEmpty && !engine.presetsLoading {
+                    await engine.loadAllSystemPresets()
+                }
+            }
+        }
+    }
+
     private var preferencesSheet: some View {
         NavigationStack {
             List {
@@ -2065,6 +2250,33 @@ struct OrcaRootView: View {
                     Toggle("Dark mode (forced)", isOn: .constant(true))
                         .listRowBackground(OrcaTheme.panel)
                     labeled("Theme", "Orca desktop dark")
+                }
+                Section("Setup") {
+                    Button("Show setup wizard again") {
+                        OrcaEngine.wizardCompleted = false
+                        showPreferences = false
+                        showWizard = true
+                    }
+                    .foregroundStyle(OrcaTheme.accent)
+                    .listRowBackground(OrcaTheme.panel)
+                    Button("Export user presets (zip)") {
+                        if let url = engine.exportPresetBundleZip() {
+                            presetBundleShareURL = url
+                            status = engine.lastMessage
+                            exportUserPresetsZip() // also present system share sheet
+                        } else {
+                            status = engine.lastMessage
+                        }
+                    }
+                    .foregroundStyle(OrcaTheme.accent)
+                    .listRowBackground(OrcaTheme.panel)
+                    if let url = presetBundleShareURL {
+                        ShareLink(item: url) {
+                            Label("Share \(url.lastPathComponent)", systemImage: "square.and.arrow.up")
+                                .foregroundStyle(OrcaTheme.accent)
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+                    }
                 }
                 Section("Slicing defaults") {
                     labeled("Compatible filter", engine.compatibleOnly ? "On" : "Off")
@@ -2207,34 +2419,76 @@ struct OrcaRootView: View {
     private var layerScrubber: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Layer Z")
+                Text("Clip Z (min–max)")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(OrcaTheme.muted)
                 Spacer()
-                Text(String(format: "%.2f / %.2f mm", engine.previewMaxZ, engine.gcodeZMax))
+                Text(String(
+                    format: "%.2f–%.2f / %.2f mm",
+                    engine.previewMinZ, engine.previewMaxZ, engine.gcodeZMax
+                ))
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(OrcaTheme.accent)
             }
+            // Max Z (top clip) — desktop G-code layer scrubber
             Slider(
                 value: Binding(
                     get: { Double(engine.previewMaxZ) },
                     set: { v in
                         engine.previewMaxZ = Float(v)
+                        if engine.previewMinZ > engine.previewMaxZ {
+                            engine.previewMinZ = engine.previewMaxZ
+                        }
                         engine.applyPreviewLayer()
                     }
                 ),
                 in: Double(engine.gcodeZMin)...Double(max(engine.gcodeZMax, engine.gcodeZMin + 0.05))
             )
             .tint(OrcaTheme.accent)
+            // Min Z (bottom clip / clipping plane lite)
+            Slider(
+                value: Binding(
+                    get: { Double(engine.previewMinZ) },
+                    set: { v in
+                        engine.previewMinZ = Float(v)
+                        if engine.previewMinZ > engine.previewMaxZ {
+                            engine.previewMaxZ = engine.previewMinZ
+                        }
+                        engine.applyPreviewLayer()
+                    }
+                ),
+                in: Double(engine.gcodeZMin)...Double(max(engine.gcodeZMax, engine.gcodeZMin + 0.05))
+            )
+            .tint(OrcaTheme.muted)
 
-            // Feature-type toggles (G5) — filter ;TYPE: groups + travel moves
+            // Color legend chips — wall / infill / support / travel / other (W5)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    featureToggle("Wall", isOn: $engine.previewShowWall)
-                    featureToggle("Infill", isOn: $engine.previewShowInfill)
-                    featureToggle("Support", isOn: $engine.previewShowSupport)
-                    featureToggle("Travel", isOn: $engine.previewShowTravel)
-                    featureToggle("Other", isOn: $engine.previewShowOther)
+                    legendChip(
+                        "Wall",
+                        color: Color(red: 0.95, green: 0.55, blue: 0.15),
+                        isOn: $engine.previewShowWall
+                    )
+                    legendChip(
+                        "Infill",
+                        color: Color(red: 0.25, green: 0.75, blue: 0.55),
+                        isOn: $engine.previewShowInfill
+                    )
+                    legendChip(
+                        "Support",
+                        color: Color(red: 0.55, green: 0.55, blue: 0.60),
+                        isOn: $engine.previewShowSupport
+                    )
+                    legendChip(
+                        "Travel",
+                        color: Color(red: 0.45, green: 0.45, blue: 0.50),
+                        isOn: $engine.previewShowTravel
+                    )
+                    legendChip(
+                        "Other",
+                        color: Color(red: 0.70, green: 0.70, blue: 0.75),
+                        isOn: $engine.previewShowOther
+                    )
                 }
             }
 
@@ -2312,6 +2566,32 @@ struct OrcaRootView: View {
                 .overlay(
                     Capsule().stroke(isOn.wrappedValue ? OrcaTheme.accent : Color.clear, lineWidth: 1)
                 )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Color-swatch legend chip for G-code feature groups (W5).
+    private func legendChip(_ title: String, color: Color, isOn: Binding<Bool>) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+            engine.applyPreviewLayer()
+        } label: {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
+                    .opacity(isOn.wrappedValue ? 1 : 0.35)
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isOn.wrappedValue ? color.opacity(0.22) : OrcaTheme.elevated)
+            .foregroundStyle(isOn.wrappedValue ? OrcaTheme.text : OrcaTheme.muted)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(isOn.wrappedValue ? color.opacity(0.8) : Color.clear, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -2994,6 +3274,71 @@ struct OrcaRootView: View {
                         }
                         .listRowBackground(OrcaTheme.panel)
 
+                        // Emboss lite — flat box "text plate" named by user
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Text plate (emboss lite)")
+                                .foregroundStyle(OrcaTheme.muted)
+                            TextField("Name / label", text: $textPlateName)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .foregroundStyle(OrcaTheme.text)
+                            HStack {
+                                TextField("X", text: $textPlateX)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .foregroundStyle(OrcaTheme.text)
+                                    .frame(width: 48)
+                                Text("×").foregroundStyle(OrcaTheme.muted)
+                                TextField("Y", text: $textPlateY)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .foregroundStyle(OrcaTheme.text)
+                                    .frame(width: 48)
+                                Text("×").foregroundStyle(OrcaTheme.muted)
+                                TextField("Z", text: $textPlateZ)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .foregroundStyle(OrcaTheme.text)
+                                    .frame(width: 48)
+                                Text("mm").foregroundStyle(OrcaTheme.muted)
+                                Spacer()
+                                Button("Add") {
+                                    let sx = Float(textPlateX) ?? 40
+                                    let sy = Float(textPlateY) ?? 10
+                                    let sz = Float(textPlateZ) ?? 2
+                                    _ = engine.addTextPlate(
+                                        name: textPlateName, sizeX: sx, sizeY: sy, sizeZ: sz
+                                    )
+                                    status = engine.lastMessage
+                                }
+                                .fontWeight(.bold)
+                                .foregroundStyle(OrcaTheme.accent)
+                            }
+                            HStack {
+                                Text("Explode spacing")
+                                    .foregroundStyle(OrcaTheme.muted)
+                                TextField("20", text: $explodeSpacing)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .foregroundStyle(OrcaTheme.text)
+                                    .frame(width: 48)
+                                Text("mm").foregroundStyle(OrcaTheme.muted)
+                                Spacer()
+                                Button(engine.explodeFactor > 0.001 ? "Collapse" : "Explode") {
+                                    let sp = Float(explodeSpacing) ?? 20
+                                    if engine.explodeFactor > 0.001 {
+                                        engine.explode(factor: 0, spacingMm: sp)
+                                    } else {
+                                        engine.explode(factor: 1.2, spacingMm: sp)
+                                    }
+                                    status = engine.lastMessage
+                                }
+                                .fontWeight(.bold)
+                                .foregroundStyle(OrcaTheme.accent)
+                            }
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+
                         if engine.objectCount >= 2 {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {
@@ -3036,7 +3381,7 @@ struct OrcaRootView: View {
                     } header: {
                         Text("Mesh / object ops")
                     } footer: {
-                        Text("Clone · horizontal/tilted plane cut · CGAL repair · quadric simplify · mcut boolean (needs ≥2 objects). Brim ears gizmo paints ModelObject::brim_points.")
+                        Text("Clone · explode/collapse · text plate (box) · horizontal/tilted plane cut · CGAL repair · quadric simplify · mcut boolean (needs ≥2 objects). Brim ears gizmo paints ModelObject::brim_points.")
                             .font(.system(size: 11))
                     }
                 }
@@ -3667,6 +4012,45 @@ struct OrcaRootView: View {
                     mainTab = .preview
                 }
             }
+        }
+    }
+
+    private func exportUserPresetsZip() {
+        // Prefer store-only ZIP of Documents/OrcaSlicer/user_presets (portable bundle)
+        if let zipURL = engine.exportPresetBundleZip() {
+            presetBundleShareURL = zipURL
+            status = engine.lastMessage
+            #if canImport(UIKit)
+            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let root = scene.windows.first?.rootViewController {
+                let av = UIActivityViewController(activityItems: [zipURL], applicationActivities: nil)
+                root.present(av, animated: true)
+            }
+            #endif
+            return
+        }
+        // Fallback: NSFileCoordinator package zip of the directory
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let userPresets = docs.appendingPathComponent("OrcaSlicer/user_presets", isDirectory: true)
+        let zipURL = FileManager.default.temporaryDirectory.appendingPathComponent("orca_user_presets.zip")
+        try? FileManager.default.removeItem(at: zipURL)
+        let coordinator = NSFileCoordinator()
+        var err: NSError?
+        coordinator.coordinate(readingItemAt: userPresets, options: .forUploading, error: &err) { temp in
+            try? FileManager.default.copyItem(at: temp, to: zipURL)
+        }
+        if FileManager.default.fileExists(atPath: zipURL.path) {
+            presetBundleShareURL = zipURL
+            status = "Preset bundle ready: \(zipURL.lastPathComponent)"
+            #if canImport(UIKit)
+            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let root = scene.windows.first?.rootViewController {
+                let av = UIActivityViewController(activityItems: [zipURL], applicationActivities: nil)
+                root.present(av, animated: true)
+            }
+            #endif
+        } else {
+            status = err?.localizedDescription ?? engine.lastMessage
         }
     }
 
