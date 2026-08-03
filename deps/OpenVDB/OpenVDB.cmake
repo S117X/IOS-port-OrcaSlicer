@@ -11,7 +11,10 @@ if (IN_GIT_REPO)
 endif ()
 
 set(_openvdb_ios_hints "")
+set(_openvdb_build_print ON)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS" OR ORCA_IOS_DEPS)
+  # vdb_print is MACOSX_BUNDLE — breaks install on iOS; core lib is enough for slicer
+  set(_openvdb_build_print OFF)
   set(_openvdb_ios_hints
     -DBOOST_ROOT:PATH=${DESTDIR}
     -DBoost_NO_SYSTEM_PATHS:BOOL=ON
@@ -36,7 +39,7 @@ orcaslicer_add_cmake_project(OpenVDB
         -DOPENVDB_CORE_STATIC=${_build_static}
         -DOPENVDB_ENABLE_RPATH:BOOL=OFF
         -DTBB_STATIC=${_build_static}
-        -DOPENVDB_BUILD_VDB_PRINT=ON
+        -DOPENVDB_BUILD_VDB_PRINT=${_openvdb_build_print}
         -DDISABLE_DEPENDENCY_VERSION_CHECKS=ON # Centos6 has old zlib
         ${_openvdb_ios_hints}
 )
