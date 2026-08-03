@@ -2690,6 +2690,9 @@ int orca_session_restore_snapshot(orca_session_t *s, const char *path)
     int rc = orca_session_load_model(s, path); // 3MF load applies embedded config
     if (rc != 0)
         return rc;
+    // Snapshot is a full plate state — drop explode baselines
+    s->explode_saved = false;
+    s->explode_origin_offsets.clear();
     // Re-assert bed if stripped
     float w2 = 0, d2 = 0, h2 = 0;
     if (orca_session_bed_size(s, &w2, &d2, &h2) != 0 || w2 < 1.f)

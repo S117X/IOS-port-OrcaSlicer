@@ -1035,14 +1035,24 @@ final class OrcaEngine: ObservableObject {
     }
 
     func selectObject(at index: Int) {
-        guard index >= 0, index < objectCount || index < objectMeshes.count else {
-            selectedObjectIndex = -1
-            lastMessage = "Selection cleared"
+        let count = max(objectCount, objectMeshes.count)
+        guard index >= 0, index < count else {
+            clearSelection()
+            return
+        }
+        // Tap same object again → deselect
+        if selectedObjectIndex == index {
+            clearSelection()
             return
         }
         selectedObjectIndex = index
         let name = objectNames.indices.contains(index) ? objectNames[index] : "Object \(index + 1)"
-        lastMessage = "Selected \(name)"
+        lastMessage = "Selected \(name) · tap again or empty plate to deselect"
+    }
+
+    func clearSelection() {
+        selectedObjectIndex = -1
+        lastMessage = "Nothing selected · tap an object to select"
     }
 
     func refreshBounds() {
@@ -1918,11 +1928,18 @@ final class OrcaEngine: ObservableObject {
 
     // MARK: - wx-parity: undo stack (3MF snapshots) + per-object settings
 
-    private var undoStack: [URL] = []
-    private var redoStack: [URL] = []
-    private let maxUndo = 20
+    private struct UndoEntry {
+        let url: URL
+        let label: String
+    }
+    private var undoStack: [UndoEntry] = []
+    private var redoStack: [UndoEntry] = []
+    private let maxUndo = 40
     @Published var canUndo = false
     @Published var canRedo = false
+    /// How many undo steps are available (for UI)
+    @Published var undoDepth: Int = 0
+    @Published var redoDepth: Int = 0
 
     private func undoDir() -> URL {
         let d = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -1931,83 +1948,118 @@ final class OrcaEngine: ObservableObject {
         return d
     }
 
+    private func refreshUndoFlags() {
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
+        undoDepth = undoStack.count
+        redoDepth = redoStack.count
+    }
+
+    private func writeSnapshotFile(session s: OpaquePointer, prefix: String) -> URL? {
+        let url = undoDir().appendingPathComponent("\(prefix)_\(UUID().uuidString).3mf")
+        let rc = url.path.withCString { orca_session_snapshot(s, $0) }
+        guard rc == 0 else { return nil }
+        // Verify non-empty file — empty 3MF means store failed silently
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? NSNumber, size.intValue > 64
+        else {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        return url
+    }
+
+    private func applySnapshotFile(_ url: URL) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else { return false }
+        let rc = url.path.withCString { orca_session_restore_snapshot(s, $0) }
+        guard rc == 0 else { return false }
+        let n = Int(orca_session_object_count(s))
+        hasModel = n > 0
+        if hasModel {
+            refreshObjectList()
+            refreshMesh()
+            refreshBounds()
+            refreshModelInfo()
+            refreshBedSize()
+            // Keep selection if still valid
+            if selectedObjectIndex >= n {
+                selectedObjectIndex = n > 0 ? 0 : -1
+            }
+        } else {
+            clearPlate()
+        }
+        return true
+        #else
+        return false
+        #endif
+    }
+
     /// Call before destructive/transform operations (desktop Edit → Undo stack).
     func pushUndoSnapshot(label: String = "edit") {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
-        let url = undoDir().appendingPathComponent("snap_\(UUID().uuidString).3mf")
-        let rc = url.path.withCString { orca_session_snapshot(s, $0) }
-        guard rc == 0 else { return }
-        undoStack.append(url)
-        if undoStack.count > maxUndo {
-            let old = undoStack.removeFirst()
-            try? FileManager.default.removeItem(at: old)
+        guard let url = writeSnapshotFile(session: s, prefix: "undo") else {
+            // Don't wipe existing stack if this push fails
+            return
         }
-        // New branch invalidates redo
-        for u in redoStack { try? FileManager.default.removeItem(at: u) }
+        undoStack.append(UndoEntry(url: url, label: label))
+        while undoStack.count > maxUndo {
+            let old = undoStack.removeFirst()
+            try? FileManager.default.removeItem(at: old.url)
+        }
+        // New edit branch invalidates redo
+        for e in redoStack { try? FileManager.default.removeItem(at: e.url) }
         redoStack.removeAll()
-        canUndo = !undoStack.isEmpty
-        canRedo = false
-        lastMessage = "Undo checkpoint · \(label)"
+        refreshUndoFlags()
+        // Don't stomp lastMessage (caller sets "Moved…" etc.)
         #endif
     }
 
     func undo() {
         #if ORCA_LINKED
-        guard let s = session, let url = undoStack.popLast() else {
+        guard let s = session, let entry = undoStack.popLast() else {
             lastMessage = "Nothing to undo"
+            refreshUndoFlags()
             return
         }
-        // Save current as redo
-        let redoURL = undoDir().appendingPathComponent("redo_\(UUID().uuidString).3mf")
-        if hasModel {
-            _ = redoURL.path.withCString { orca_session_snapshot(s, $0) }
-            redoStack.append(redoURL)
+        // Save current as redo (post-action state)
+        if hasModel, let redoURL = writeSnapshotFile(session: s, prefix: "redo") {
+            redoStack.append(UndoEntry(url: redoURL, label: entry.label))
         }
-        let rc = url.path.withCString { orca_session_restore_snapshot(s, $0) }
-        try? FileManager.default.removeItem(at: url)
-        if rc == 0 {
-            hasModel = orca_session_object_count(s) > 0
-            if hasModel {
-                refreshObjectList(); refreshMesh(); refreshBounds(); refreshModelInfo(); refreshBedSize()
-            } else {
-                clearPlate()
-            }
-            lastMessage = "Undo"
+        if applySnapshotFile(entry.url) {
+            lastMessage = "Undo · \(entry.label) · \(undoStack.count) left"
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "undo failed"
+            // Put entry back if restore failed
+            undoStack.append(entry)
         }
-        canUndo = !undoStack.isEmpty
-        canRedo = !redoStack.isEmpty
+        // Drop used undo file only after successful restore
+        if lastMessage.hasPrefix("Undo") {
+            try? FileManager.default.removeItem(at: entry.url)
+        }
+        refreshUndoFlags()
         #endif
     }
 
     func redo() {
         #if ORCA_LINKED
-        guard let s = session, let url = redoStack.popLast() else {
+        guard let s = session, let entry = redoStack.popLast() else {
             lastMessage = "Nothing to redo"
+            refreshUndoFlags()
             return
         }
-        let undoURL = undoDir().appendingPathComponent("snap_\(UUID().uuidString).3mf")
-        if hasModel {
-            _ = undoURL.path.withCString { orca_session_snapshot(s, $0) }
-            undoStack.append(undoURL)
+        if hasModel, let undoURL = writeSnapshotFile(session: s, prefix: "undo") {
+            undoStack.append(UndoEntry(url: undoURL, label: entry.label))
         }
-        let rc = url.path.withCString { orca_session_restore_snapshot(s, $0) }
-        try? FileManager.default.removeItem(at: url)
-        if rc == 0 {
-            hasModel = orca_session_object_count(s) > 0
-            if hasModel {
-                refreshObjectList(); refreshMesh(); refreshBounds(); refreshModelInfo(); refreshBedSize()
-            } else {
-                clearPlate()
-            }
-            lastMessage = "Redo"
+        if applySnapshotFile(entry.url) {
+            lastMessage = "Redo · \(entry.label)"
+            try? FileManager.default.removeItem(at: entry.url)
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "redo failed"
+            redoStack.append(entry)
         }
-        canUndo = !undoStack.isEmpty
-        canRedo = !redoStack.isEmpty
+        refreshUndoFlags()
         #endif
     }
 

@@ -474,9 +474,14 @@ struct PlateSceneView: UIViewRepresentable {
                 }
                 return
             }
-            // Tap object on plate → select (desktop plater click)
-            if parent.selectMode, let idx = hitObjectIndex(view: view, screen: screen) {
-                parent.onSelectObject?(idx)
+            // Tap object on plate → select; tap empty bed → deselect
+            if parent.selectMode {
+                if let idx = hitObjectIndex(view: view, screen: screen) {
+                    parent.onSelectObject?(idx)
+                } else {
+                    // Empty plate / bed → clear selection (index -1)
+                    parent.onSelectObject?(-1)
+                }
             }
         }
 

@@ -304,20 +304,32 @@ struct OrcaRootView: View {
                 engine.undo()
                 status = engine.lastMessage
             } label: {
-                Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(engine.canUndo ? OrcaTheme.text : OrcaTheme.muted)
-                    .frame(width: 40, height: 44)
+                HStack(spacing: 2) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 15, weight: .semibold))
+                    if engine.undoDepth > 0 {
+                        Text("\(engine.undoDepth)")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    }
+                }
+                .foregroundStyle(engine.canUndo ? OrcaTheme.text : OrcaTheme.muted)
+                .frame(minWidth: 40, minHeight: 44)
             }
             .disabled(!engine.canUndo)
             Button {
                 engine.redo()
                 status = engine.lastMessage
             } label: {
-                Image(systemName: "arrow.uturn.forward")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(engine.canRedo ? OrcaTheme.text : OrcaTheme.muted)
-                    .frame(width: 40, height: 44)
+                HStack(spacing: 2) {
+                    Image(systemName: "arrow.uturn.forward")
+                        .font(.system(size: 15, weight: .semibold))
+                    if engine.redoDepth > 0 {
+                        Text("\(engine.redoDepth)")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    }
+                }
+                .foregroundStyle(engine.canRedo ? OrcaTheme.text : OrcaTheme.muted)
+                .frame(minWidth: 40, minHeight: 44)
             }
             .disabled(!engine.canRedo)
             Menu {
@@ -1997,7 +2009,11 @@ struct OrcaRootView: View {
                 onMeasurePick: { handleMeasurePick($0) },
                 onPaintHit: { pt, isBegin in handlePaintHit(pt, isBegin: isBegin) },
                 onSelectObject: { idx in
-                    engine.selectObject(at: idx)
+                    if idx < 0 {
+                        engine.clearSelection()
+                    } else {
+                        engine.selectObject(at: idx)
+                    }
                     status = engine.lastMessage
                 }
             )
