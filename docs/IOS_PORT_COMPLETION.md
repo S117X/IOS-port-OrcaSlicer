@@ -47,7 +47,7 @@ Last updated: 2026-08-03 — expanded from v1 daily-driver to **full port (100%)
 - [x] Moonraker connect/upload/start/cancel/status
 - [x] OctoPrint same
 - [x] PrusaLink host type (OctoPrint-compatible API path)
-- [ ] mDNS / Bonjour printer discovery
+- [x] mDNS / Bonjour printer discovery
 
 ### G7 — Project
 - [x] Save / open 3MF with config
@@ -76,16 +76,16 @@ Last updated: 2026-08-03 — expanded from v1 daily-driver to **full port (100%)
 - [x] set_filament_preset for slot N + apply
 
 ### G11 — Calibration
-- [ ] Temp tower (official calib path or guided slice)
-- [ ] Flow rate calibration
-- [ ] Pressure advance / retraction helper
-- [ ] Accessible from Process or Device sheet
+- [x] Temp tower (official calib path or guided slice)
+- [x] Flow rate calibration
+- [x] Pressure advance / retraction helper
+- [x] Accessible from Process or Device sheet
 
 ### G12 — Device completeness
 - [x] Moonraker + OctoPrint
 - [x] PrusaLink
-- [ ] Bonjour discovery list
-- [ ] Live nozzle/bed temps from printer (when host supports)
+- [x] Bonjour discovery list
+- [x] Live nozzle/bed temps from printer (when host supports)
 
 ### G13 — Files & presets
 - [x] Recent models list

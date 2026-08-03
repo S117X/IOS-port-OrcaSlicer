@@ -60,6 +60,9 @@ final class OrcaEngine: ObservableObject {
     /// File path to machine cover / bed texture for plate logo
     @Published var bedTexturePath: String?
     @Published var printerCoverPath: String?
+    /// Active calibration mode (Slic3r::CalibMode raw int); 0 = none
+    @Published var calibMode: Int = 0
+    @Published var calibSummary: String = ""
 
     private let prefsPrinterKey = "orca.lastPrinter"
     private let prefsProcessKey = "orca.lastProcess"
@@ -1155,6 +1158,140 @@ final class OrcaEngine: ObservableObject {
         lastMessage = "Not linked"
         return false
         #endif
+    }
+
+    // MARK: - Calibration (official CalibMode via Print::set_calib_params)
+
+    /// Set calibration sweep for next slice. mode matches CalibMode enum.
+    @discardableResult
+    func setCalib(mode: Int, start: Double, end: Double, step: Double) -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else {
+            lastMessage = "No session"
+            return false
+        }
+        let rc = orca_session_set_calib(s, Int32(mode), start, end, step)
+        if rc != 0 {
+            let err = orca_session_last_error(s).map { String(cString: $0) } ?? "error"
+            lastMessage = "set_calib rc=\(rc): \(err)"
+            return false
+        }
+        calibMode = mode
+        calibSummary = Self.calibLabel(mode: mode, start: start, end: end, step: step)
+        lastMessage = "Calibration: \(calibSummary)"
+        return true
+        #else
+        lastMessage = "Not linked"
+        return false
+        #endif
+    }
+
+    @discardableResult
+    func clearCalib() -> Bool {
+        #if ORCA_LINKED
+        guard let s = session else { return false }
+        _ = orca_session_clear_calib(s)
+        calibMode = 0
+        calibSummary = ""
+        lastMessage = "Calibration cleared"
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private static func calibLabel(mode: Int, start: Double, end: Double, step: Double) -> String {
+        let name: String
+        switch mode {
+        case 1: name = "PA Line"
+        case 2: name = "PA Pattern"
+        case 3: name = "PA Tower"
+        case 5: name = "Flow Rate"
+        case 6: name = "Temp Tower"
+        case 9: name = "Retraction"
+        default: name = "Mode \(mode)"
+        }
+        if mode == 5 { return name }
+        return String(format: "%@ %.3g→%.3g step %.3g", name, start, end, step)
+    }
+
+    /// Load official bundled calib mesh under Resources/calib/…
+    @discardableResult
+    func loadBundledCalib(relativePath: String) -> Bool {
+        // Try folder-reference layout (Resources/calib/…) then flat lookup
+        let candidates: [URL?] = [
+            Bundle.main.resourceURL?.appendingPathComponent("calib").appendingPathComponent(relativePath),
+            Bundle.main.url(forResource: (relativePath as NSString).deletingPathExtension,
+                            withExtension: (relativePath as NSString).pathExtension,
+                            subdirectory: "calib/" + ((relativePath as NSString).deletingLastPathComponent)),
+            Bundle.main.url(forResource: (relativePath as NSString).lastPathComponent.replacingOccurrences(of: ".\((relativePath as NSString).pathExtension)", with: ""),
+                            withExtension: (relativePath as NSString).pathExtension,
+                            subdirectory: "calib"),
+        ]
+        for case let url? in candidates {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let msg = loadModel(url: url, append: false)
+                lastMessage = "Calib model: \(url.lastPathComponent) · \(msg)"
+                return hasModel
+            }
+        }
+        lastMessage = "Bundled calib missing: calib/\(relativePath)"
+        return false
+    }
+
+    /// Temp tower: load model + set Calib_Temp_Tower (temps change each 5 °C block).
+    @discardableResult
+    func prepareTempTower(startC: Double = 230, endC: Double = 190) -> Bool {
+        guard loadBundledCalib(relativePath: "temperature_tower/temperature_tower.drc") else {
+            return false
+        }
+        // Brim helps adhesion on tall towers
+        setOption("brim_type", value: "outer_only")
+        setOption("brim_width", value: "5")
+        setOption("enable_support", value: "0")
+        let start = max(endC + 5, min(500, startC))
+        let end = min(start - 5, max(155, endC))
+        setOption("nozzle_temperature", value: String(Int(start)))
+        setOption("nozzle_temperature_initial_layer", value: String(Int(start)))
+        return setCalib(mode: 6, start: start, end: end, step: 5)
+    }
+
+    /// Flow rate pass 1 or 2 (official multi-object 3MF with per-object flow modifiers).
+    @discardableResult
+    func prepareFlowRate(pass: Int = 1, linear: Bool = true) -> Bool {
+        let path: String
+        if linear {
+            path = pass == 2
+                ? "filament_flow/Orca-LinearFlow_fine.3mf"
+                : "filament_flow/Orca-LinearFlow.3mf"
+        } else {
+            path = pass == 2
+                ? "filament_flow/flowrate-test-pass2.3mf"
+                : "filament_flow/flowrate-test-pass1.3mf"
+        }
+        guard loadBundledCalib(relativePath: path) else { return false }
+        setOption("enable_support", value: "0")
+        return setCalib(mode: 5, start: 0, end: 0, step: 0)
+    }
+
+    /// Pressure advance line test (Klipper/Marlin PA).
+    @discardableResult
+    func preparePressureAdvance(start: Double = 0, end: Double = 0.1, step: Double = 0.002) -> Bool {
+        guard loadBundledCalib(relativePath: "pressure_advance/pressure_advance_test.drc") else {
+            return false
+        }
+        setOption("enable_support", value: "0")
+        return setCalib(mode: 1, start: start, end: end, step: max(0.0001, step))
+    }
+
+    /// Retraction tower (length increases with Z).
+    @discardableResult
+    func prepareRetraction(start: Double = 0, end: Double = 2, step: Double = 0.1) -> Bool {
+        guard loadBundledCalib(relativePath: "retraction/retraction_tower.drc") else {
+            return false
+        }
+        setOption("enable_support", value: "0")
+        return setCalib(mode: 9, start: start, end: end, step: max(0.01, step))
     }
 
     @Published var slicePercent: Int = 0

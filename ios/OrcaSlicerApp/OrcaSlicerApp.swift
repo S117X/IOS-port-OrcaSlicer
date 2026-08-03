@@ -4,6 +4,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import SceneKit
+import Network
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -42,6 +43,7 @@ struct OrcaRootView: View {
     @State private var showImporter = false
     @State private var importAppend = false
     @State private var showProcess = false
+    @State private var showCalibration = false
     @State private var projectURL: URL?
     @State private var layerHeight = "0.20"
     @State private var infill = "15"
@@ -117,6 +119,12 @@ struct OrcaRootView: View {
         }
         .sheet(isPresented: $showProcess) {
             processSheet
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $showCalibration) {
+            calibrationSheet
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .preferredColorScheme(.dark)
@@ -238,6 +246,29 @@ struct OrcaRootView: View {
     @State private var statusPollTask: Task<Void, Never>?
     @State private var nozzleTemp = "210"
     @State private var bedTemp = "60"
+    /// Live temps from printer host (when connected)
+    @State private var liveNozzleActual: Double?
+    @State private var liveNozzleTarget: Double?
+    @State private var liveBedActual: Double?
+    @State private var liveBedTarget: Double?
+    @State private var liveTempText = ""
+    /// Bonjour / mDNS discovery
+    @State private var discoveredPrinters: [DiscoveredPrinter] = []
+    @State private var isDiscovering = false
+    @State private var discoveryBrowsers: [NWBrowser] = []
+    @State private var discoveryStatus = ""
+
+    struct DiscoveredPrinter: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let host: String
+        let port: Int
+        let serviceType: String
+        var urlString: String {
+            let h = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+            return "http://\(h):\(port)"
+        }
+    }
 
     private var devicePlaceholder: some View {
         ScrollView {
@@ -255,6 +286,111 @@ struct OrcaRootView: View {
                             .foregroundStyle(OrcaTheme.muted)
                     }
                     Spacer()
+                    Button {
+                        showCalibration = true
+                    } label: {
+                        Image(systemName: "ruler")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OrcaTheme.accent)
+                            .frame(width: 40, height: 40)
+                            .background(OrcaTheme.elevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // Live temps from host
+                if !liveTempText.isEmpty || liveNozzleActual != nil {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Live temps")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OrcaTheme.muted)
+                        HStack(spacing: 16) {
+                            liveTempBadge(
+                                title: "Nozzle",
+                                actual: liveNozzleActual,
+                                target: liveNozzleTarget
+                            )
+                            liveTempBadge(
+                                title: "Bed",
+                                actual: liveBedActual,
+                                target: liveBedTarget
+                            )
+                        }
+                        if !liveTempText.isEmpty {
+                            Text(liveTempText)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(OrcaTheme.panel.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                // Bonjour discovery
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Discover printers (mDNS)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OrcaTheme.muted)
+                        Spacer()
+                        Button {
+                            if isDiscovering { stopPrinterDiscovery() }
+                            else { startPrinterDiscovery() }
+                        } label: {
+                            Text(isDiscovering ? "Stop" : "Scan")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(OrcaTheme.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if !discoveryStatus.isEmpty {
+                        Text(discoveryStatus)
+                            .font(.system(size: 11))
+                            .foregroundStyle(OrcaTheme.muted)
+                    }
+                    if discoveredPrinters.isEmpty && isDiscovering {
+                        HStack(spacing: 8) {
+                            ProgressView().scaleEffect(0.8)
+                            Text("Browsing LAN…")
+                                .font(.system(size: 12))
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                    }
+                    ForEach(discoveredPrinters) { p in
+                        Button {
+                            printerHost = p.urlString
+                            if p.serviceType.contains("octoprint") {
+                                hostType = .octoprint
+                            } else if p.serviceType.contains("moonraker") || p.name.lowercased().contains("klipper") {
+                                hostType = .moonraker
+                            }
+                            printerStatus = "Selected \(p.name)"
+                            Task { await connectPrinterHost() }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(p.name)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(OrcaTheme.text)
+                                        .lineLimit(1)
+                                    Text("\(p.serviceType) · \(p.urlString)")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(OrcaTheme.muted)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(OrcaTheme.muted)
+                            }
+                            .padding(10)
+                            .background(OrcaTheme.elevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 Picker("Host type", selection: $hostType) {
@@ -268,6 +404,9 @@ struct OrcaRootView: View {
                     jobState = ""
                     jobMessage = ""
                     lastUploadedFilename = nil
+                    liveNozzleActual = nil
+                    liveBedActual = nil
+                    liveTempText = ""
                     statusPollTask?.cancel()
                 }
 
@@ -536,6 +675,8 @@ struct OrcaRootView: View {
                 } else {
                     printerStatus = "Moonraker connected (HTTP \(code))"
                 }
+                await refreshLiveTemps()
+                startLiveTempPolling()
             } else {
                 printerStatus = "HTTP \(code) from server.info"
             }
@@ -563,17 +704,34 @@ struct OrcaRootView: View {
                     let ver = (json["server"] as? String)
                         ?? (json["api"] as? String)
                         ?? "ok"
-                    printerStatus = "OctoPrint · \(ver)"
+                    let label = hostType == .prusalink ? "PrusaLink" : "OctoPrint"
+                    printerStatus = "\(label) · \(ver)"
                 } else {
-                    printerStatus = "OctoPrint connected"
+                    printerStatus = hostType == .prusalink ? "PrusaLink connected" : "OctoPrint connected"
                 }
+                await refreshLiveTemps()
+                startLiveTempPolling()
             } else if code == 403 {
-                printerStatus = "OctoPrint 403 — check API key"
+                printerStatus = "HTTP 403 — check API key"
             } else {
-                printerStatus = "OctoPrint HTTP \(code)"
+                printerStatus = "HTTP \(code)"
             }
         } catch {
             printerStatus = "Unreachable: \(error.localizedDescription)"
+        }
+    }
+
+    /// Light-weight temp poll while Device tab is connected (independent of job).
+    private func startLiveTempPolling() {
+        // Reuse statusPollTask only if not already job-polling; spawn dedicated loop via job task
+        // when idle so live temps keep updating after Connect.
+        if statusPollTask != nil { return }
+        statusPollTask = Task {
+            for _ in 0..<360 { // ~30 min at 5s
+                if Task.isCancelled { return }
+                await refreshLiveTemps()
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
         }
     }
 
@@ -710,7 +868,7 @@ struct OrcaRootView: View {
         }
     }
 
-    /// GET /printer/objects/query?print_stats&display_status
+    /// GET /printer/objects/query?print_stats&display_status&extruder&heater_bed
     private func refreshMoonrakerJobStatus() async {
         guard let base = moonrakerBaseURL() else { return }
         var comps = URLComponents(
@@ -721,6 +879,8 @@ struct OrcaRootView: View {
         comps?.queryItems = [
             URLQueryItem(name: "print_stats", value: nil),
             URLQueryItem(name: "display_status", value: nil),
+            URLQueryItem(name: "extruder", value: nil),
+            URLQueryItem(name: "heater_bed", value: nil),
         ]
         guard let url = comps?.url else { return }
         var req = URLRequest(url: url)
@@ -752,6 +912,7 @@ struct OrcaRootView: View {
                     jobMessage = msg
                 }
             }
+            applyMoonrakerTemps(statusObj)
             if !jobState.isEmpty {
                 printerStatus = "Job · \(jobState) · \(String(format: "%.0f%%", jobProgress * 100))"
             }
@@ -760,12 +921,63 @@ struct OrcaRootView: View {
         }
     }
 
+    private func applyMoonrakerTemps(_ statusObj: [String: Any]) {
+        if let ex = statusObj["extruder"] as? [String: Any] {
+            liveNozzleActual = Self.jsonDouble(ex["temperature"])
+            liveNozzleTarget = Self.jsonDouble(ex["target"])
+        }
+        if let bed = statusObj["heater_bed"] as? [String: Any] {
+            liveBedActual = Self.jsonDouble(bed["temperature"])
+            liveBedTarget = Self.jsonDouble(bed["target"])
+        }
+        updateLiveTempText()
+    }
+
+    private static func jsonDouble(_ v: Any?) -> Double? {
+        if let d = v as? Double { return d }
+        if let i = v as? Int { return Double(i) }
+        if let n = v as? NSNumber { return n.doubleValue }
+        return nil
+    }
+
+    private func updateLiveTempText() {
+        let nA = liveNozzleActual.map { String(format: "%.0f", $0) } ?? "—"
+        let nT = liveNozzleTarget.map { String(format: "%.0f", $0) } ?? "—"
+        let bA = liveBedActual.map { String(format: "%.0f", $0) } ?? "—"
+        let bT = liveBedTarget.map { String(format: "%.0f", $0) } ?? "—"
+        liveTempText = "N \(nA)/\(nT) °C · B \(bA)/\(bT) °C"
+    }
+
+    private func liveTempBadge(title: String, actual: Double?, target: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(OrcaTheme.muted)
+            if let a = actual {
+                Text(String(format: "%.0f°", a))
+                    .font(.system(size: 22, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.accent)
+            } else {
+                Text("—")
+                    .font(.system(size: 22, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.muted)
+            }
+            if let t = target {
+                Text(String(format: "→ %.0f°", t))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(OrcaTheme.muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func startJobStatusPolling() {
         statusPollTask?.cancel()
         statusPollTask = Task {
             for _ in 0..<120 { // ~10 min at 5s
                 if Task.isCancelled { return }
                 await refreshHostJobStatus()
+                await refreshLiveTemps()
                 let s = jobState.lowercased()
                 let done = [
                     "complete", "completed", "cancelled", "canceled",
@@ -774,6 +986,199 @@ struct OrcaRootView: View {
                 if done { return }
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
             }
+        }
+    }
+
+    /// Poll live nozzle/bed temps when host supports it.
+    private func refreshLiveTemps() async {
+        switch hostType {
+        case .moonraker:
+            // Temps already folded into refreshMoonrakerJobStatus; also allow standalone poll
+            await refreshMoonrakerTempsOnly()
+        case .octoprint, .prusalink:
+            await refreshOctoPrintTemps()
+        }
+    }
+
+    private func refreshMoonrakerTempsOnly() async {
+        guard let base = moonrakerBaseURL() else { return }
+        var comps = URLComponents(
+            url: base.appendingPathComponent("printer/objects/query"),
+            resolvingAgainstBaseURL: false
+        )
+        comps?.queryItems = [
+            URLQueryItem(name: "extruder", value: nil),
+            URLQueryItem(name: "heater_bed", value: nil),
+        ]
+        guard let url = comps?.url else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 5
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200...299).contains(code),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let result = json["result"] as? [String: Any],
+                  let statusObj = result["status"] as? [String: Any]
+            else { return }
+            applyMoonrakerTemps(statusObj)
+        } catch {
+            // Silent — offline printers are common during discovery
+        }
+    }
+
+    private func refreshOctoPrintTemps() async {
+        guard let base = printerBaseURL() else { return }
+        var req = URLRequest(url: base.appendingPathComponent("api/printer"))
+        req.timeoutInterval = 5
+        octoHeaders(for: &req)
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200...299).contains(code),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let temp = json["temperature"] as? [String: Any]
+            else { return }
+            if let tool = temp["tool0"] as? [String: Any] {
+                liveNozzleActual = Self.jsonDouble(tool["actual"])
+                liveNozzleTarget = Self.jsonDouble(tool["target"])
+            }
+            if let bed = temp["bed"] as? [String: Any] {
+                liveBedActual = Self.jsonDouble(bed["actual"])
+                liveBedTarget = Self.jsonDouble(bed["target"])
+            }
+            updateLiveTempText()
+        } catch {
+            // silent
+        }
+    }
+
+    // MARK: Bonjour / mDNS discovery
+
+    private func startPrinterDiscovery() {
+        stopPrinterDiscovery()
+        isDiscovering = true
+        discoveredPrinters = []
+        discoveryStatus = "Scanning local network…"
+        // OctoPrint + common HTTP printers; Moonraker often on _http._tcp
+        let types = ["_octoprint._tcp", "_moonraker._tcp", "_http._tcp"]
+        var browsers: [NWBrowser] = []
+        for type in types {
+            let descriptor = NWBrowser.Descriptor.bonjour(type: type, domain: nil)
+            let browser = NWBrowser(for: descriptor, using: .tcp)
+            browser.stateUpdateHandler = { [type] new in
+                if case .failed(let err) = new {
+                    DispatchQueue.main.async {
+                        self.discoveryStatus = "Browse \(type): \(err.localizedDescription)"
+                    }
+                }
+            }
+            browser.browseResultsChangedHandler = { results, _ in
+                DispatchQueue.main.async {
+                    self.mergeDiscoveryResults(results, serviceType: type)
+                }
+            }
+            browser.start(queue: .main)
+            browsers.append(browser)
+        }
+        discoveryBrowsers = browsers
+        // Auto-stop after 30s
+        Task {
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            await MainActor.run {
+                if isDiscovering {
+                    stopPrinterDiscovery()
+                    discoveryStatus = discoveredPrinters.isEmpty
+                        ? "No printers found (try manual URL)"
+                        : "Found \(discoveredPrinters.count) · scan stopped"
+                }
+            }
+        }
+    }
+
+    private func stopPrinterDiscovery() {
+        for b in discoveryBrowsers { b.cancel() }
+        discoveryBrowsers = []
+        isDiscovering = false
+    }
+
+    private func mergeDiscoveryResults(_ results: Set<NWBrowser.Result>, serviceType: String) {
+        for result in results {
+            guard case let .service(name: name, type: type, domain: _, interface: _) = result.endpoint
+            else { continue }
+            let id = "\(type)|\(name)"
+            let fallbackPort = type.contains("octoprint") ? 5000
+                : type.contains("moonraker") ? 7125
+                : 80
+            // Placeholder row immediately
+            if !discoveredPrinters.contains(where: { $0.id == id }) {
+                discoveredPrinters.append(
+                    DiscoveredPrinter(id: id, name: name, host: name, port: fallbackPort, serviceType: type)
+                )
+                discoveredPrinters.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                discoveryStatus = "Found \(discoveredPrinters.count) service(s)"
+            }
+            resolveService(result: result, name: name, fallbackPort: fallbackPort) { host, port in
+                DispatchQueue.main.async {
+                    if let idx = self.discoveredPrinters.firstIndex(where: { $0.id == id }) {
+                        self.discoveredPrinters[idx] = DiscoveredPrinter(
+                            id: id, name: name, host: host, port: port, serviceType: type
+                        )
+                    } else {
+                        self.discoveredPrinters.append(
+                            DiscoveredPrinter(id: id, name: name, host: host, port: port, serviceType: type)
+                        )
+                    }
+                    self.discoveredPrinters.sort {
+                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                    }
+                    self.discoveryStatus = "Found \(self.discoveredPrinters.count) service(s)"
+                }
+            }
+        }
+        _ = serviceType
+    }
+
+    private func resolveService(
+        result: NWBrowser.Result,
+        name: String,
+        fallbackPort: Int,
+        completion: @escaping (_ host: String, _ port: Int) -> Void
+    ) {
+        let connection = NWConnection(to: result.endpoint, using: .tcp)
+        var finished = false
+        let finish: (String, Int) -> Void = { host, port in
+            guard !finished else { return }
+            finished = true
+            completion(host, port)
+            connection.cancel()
+        }
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                if let path = connection.currentPath,
+                   let ep = path.remoteEndpoint,
+                   case .hostPort(let h, let p) = ep {
+                    let hostStr: String
+                    switch h {
+                    case .name(let n, _): hostStr = n
+                    case .ipv4(let a): hostStr = "\(a)"
+                    case .ipv6(let a): hostStr = "\(a)"
+                    @unknown default: hostStr = name
+                    }
+                    finish(hostStr, Int(p.rawValue))
+                } else {
+                    finish(name, fallbackPort)
+                }
+            case .failed:
+                finish(name, fallbackPort)
+            default:
+                break
+            }
+        }
+        connection.start(queue: .global(qos: .utility))
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+            finish(name, fallbackPort)
         }
     }
 
@@ -1352,6 +1757,225 @@ struct OrcaRootView: View {
     @State private var filamentSlotForPicker = 0
     @State private var showAllSettings = false
     @State private var userProcessName = ""
+    // Calibration sheet fields
+    @State private var calibTempStart = "230"
+    @State private var calibTempEnd = "190"
+    @State private var calibPAStart = "0"
+    @State private var calibPAEnd = "0.1"
+    @State private var calibPAStep = "0.002"
+    @State private var calibRetractStart = "0"
+    @State private var calibRetractEnd = "2"
+    @State private var calibRetractStep = "0.1"
+    @State private var calibFlowPass = 1
+    @State private var calibFlowLinear = true
+
+    private var calibrationSheet: some View {
+        NavigationStack {
+            List {
+                if engine.calibMode != 0 {
+                    Section {
+                        Text(engine.calibSummary)
+                            .foregroundStyle(OrcaTheme.accent)
+                            .listRowBackground(OrcaTheme.panel)
+                        Button(role: .destructive) {
+                            _ = engine.clearCalib()
+                            status = engine.lastMessage
+                        } label: {
+                            Text("Clear calibration mode")
+                        }
+                        .listRowBackground(OrcaTheme.panel)
+                    } header: {
+                        Text("Active")
+                    }
+                }
+
+                Section {
+                    HStack {
+                        Text("Start °C").foregroundStyle(OrcaTheme.muted)
+                        TextField("230", text: $calibTempStart)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(OrcaTheme.text)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    HStack {
+                        Text("End °C").foregroundStyle(OrcaTheme.muted)
+                        TextField("190", text: $calibTempEnd)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(OrcaTheme.text)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    Button {
+                        let s = Double(calibTempStart) ?? 230
+                        let e = Double(calibTempEnd) ?? 190
+                        if engine.prepareTempTower(startC: s, endC: e) {
+                            status = engine.lastMessage
+                            showCalibration = false
+                            showProcess = false
+                            mainTab = .prepare
+                        } else {
+                            status = engine.lastMessage
+                        }
+                    } label: {
+                        Text("Load temp tower + set Calib_Temp_Tower")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                } header: {
+                    Text("Temperature tower")
+                } footer: {
+                    Text("Official temperature_tower.drc · nozzle temp steps −5 °C per block via Print::set_calib_params.")
+                        .font(.system(size: 11))
+                }
+
+                Section {
+                    Toggle("Linear (YOLO) flow", isOn: $calibFlowLinear)
+                        .tint(OrcaTheme.accent)
+                        .listRowBackground(OrcaTheme.panel)
+                    Picker("Pass", selection: $calibFlowPass) {
+                        Text("Pass 1").tag(1)
+                        Text("Pass 2 (fine)").tag(2)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    Button {
+                        if engine.prepareFlowRate(pass: calibFlowPass, linear: calibFlowLinear) {
+                            status = engine.lastMessage
+                            showCalibration = false
+                            showProcess = false
+                            mainTab = .prepare
+                        } else {
+                            status = engine.lastMessage
+                        }
+                    } label: {
+                        Text("Load flow-rate test model")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                } header: {
+                    Text("Flow rate")
+                } footer: {
+                    Text("Official Orca LinearFlow / flowrate-test 3MF · objects use per-modifier print_flow_ratio.")
+                        .font(.system(size: 11))
+                }
+
+                Section {
+                    HStack {
+                        Text("PA start").foregroundStyle(OrcaTheme.muted)
+                        TextField("0", text: $calibPAStart)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(OrcaTheme.text)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    HStack {
+                        Text("PA end").foregroundStyle(OrcaTheme.muted)
+                        TextField("0.1", text: $calibPAEnd)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(OrcaTheme.text)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    HStack {
+                        Text("Step").foregroundStyle(OrcaTheme.muted)
+                        TextField("0.002", text: $calibPAStep)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(OrcaTheme.text)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    Button {
+                        let s = Double(calibPAStart) ?? 0
+                        let e = Double(calibPAEnd) ?? 0.1
+                        let st = Double(calibPAStep) ?? 0.002
+                        if engine.preparePressureAdvance(start: s, end: e, step: st) {
+                            status = engine.lastMessage
+                            showCalibration = false
+                            showProcess = false
+                            mainTab = .prepare
+                        } else {
+                            status = engine.lastMessage
+                        }
+                    } label: {
+                        Text("Load PA line test")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                } header: {
+                    Text("Pressure advance")
+                } footer: {
+                    Text("Official pressure_advance_test.drc · Calib_PA_Line emits K-factor lines in G-code.")
+                        .font(.system(size: 11))
+                }
+
+                Section {
+                    HStack {
+                        Text("Start mm").foregroundStyle(OrcaTheme.muted)
+                        TextField("0", text: $calibRetractStart)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(OrcaTheme.text)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    HStack {
+                        Text("End mm").foregroundStyle(OrcaTheme.muted)
+                        TextField("2", text: $calibRetractEnd)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(OrcaTheme.text)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    HStack {
+                        Text("Step mm").foregroundStyle(OrcaTheme.muted)
+                        TextField("0.1", text: $calibRetractStep)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(OrcaTheme.text)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                    Button {
+                        let s = Double(calibRetractStart) ?? 0
+                        let e = Double(calibRetractEnd) ?? 2
+                        let st = Double(calibRetractStep) ?? 0.1
+                        if engine.prepareRetraction(start: s, end: e, step: st) {
+                            status = engine.lastMessage
+                            showCalibration = false
+                            showProcess = false
+                            mainTab = .prepare
+                        } else {
+                            status = engine.lastMessage
+                        }
+                    } label: {
+                        Text("Load retraction tower")
+                            .foregroundStyle(OrcaTheme.accent)
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                } header: {
+                    Text("Retraction helper")
+                } footer: {
+                    Text("Official retraction_tower.drc · retraction length ramps with Z (Calib_Retraction_tower).")
+                        .font(.system(size: 11))
+                }
+
+                Section {
+                    Text("After loading a calibration model: Slice → Preview → Device upload/print. Clear calibration before normal prints.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(OrcaTheme.muted)
+                        .listRowBackground(OrcaTheme.panel)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OrcaTheme.bg)
+            .navigationTitle("Calibration")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { showCalibration = false }
+                        .foregroundStyle(OrcaTheme.accent)
+                }
+            }
+        }
+    }
 
     private var processSheet: some View {
         NavigationStack {
@@ -1480,6 +2104,33 @@ struct OrcaRootView: View {
                     }
                 } header: {
                     Text("System profiles")
+                }
+
+                Section {
+                    Button {
+                        showCalibration = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "ruler")
+                                .foregroundStyle(OrcaTheme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Calibration")
+                                    .foregroundStyle(OrcaTheme.text)
+                                Text(engine.calibMode == 0
+                                     ? "Temp tower · flow · PA · retraction"
+                                     : engine.calibSummary)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(OrcaTheme.muted)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(OrcaTheme.muted)
+                        }
+                    }
+                    .listRowBackground(OrcaTheme.panel)
+                } header: {
+                    Text("Calibration")
                 }
 
                 if !engine.recentModelPaths.isEmpty {

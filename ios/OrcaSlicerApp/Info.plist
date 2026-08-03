@@ -34,9 +34,11 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_http._tcp</string>
+		<string>_octoprint._tcp</string>
+		<string>_moonraker._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>OrcaSlicer connects to Moonraker / OctoPrint printers on your local network to upload G-code.</string>
+	<string>OrcaSlicer discovers and connects to Moonraker / OctoPrint / PrusaLink printers on your local network to upload G-code and read live temperatures.</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchScreen</key>

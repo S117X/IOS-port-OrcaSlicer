@@ -32,6 +32,7 @@
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/Arrange.hpp"
 #include "libslic3r/Orient.hpp"
+#include "libslic3r/calib.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -61,6 +62,9 @@ struct orca_session {
     float       last_time_sec{0.f};
     float       last_filament_mm3{0.f};
     int         last_layers{0};
+
+    // Official calibration (applied at slice via Print::set_calib_params)
+    Calib_Params calib_params;
 
     // Official system preset catalog
     std::unique_ptr<PresetBundle> preset_bundle;
@@ -396,6 +400,12 @@ int orca_session_slice_to_gcode(orca_session_t *s, const char *gcode_out_path)
         if (print.empty()) {
             s->set_error("Print empty after apply — objects outside bed or invalid");
             return -3;
+        }
+
+        // Official calibration path (temp tower / PA / flow / retraction, …)
+        if (s->calib_params.mode != CalibMode::Calib_None) {
+            print.set_calib_params(s->calib_params);
+            s->report_progress(12, "Calibration mode active");
         }
 
         print.set_status_silent();
@@ -1881,6 +1891,43 @@ void orca_session_purge_option_caches(orca_session_t *s)
     s->enum_labels_cache.clear();
     s->enum_labels_cache.shrink_to_fit();
     s->enum_lookup_key.clear();
+}
+
+int orca_session_set_calib(
+    orca_session_t *s, int mode, double start, double end, double step)
+{
+    if (!s)
+        return -1;
+    s->clear_error();
+    // Clamp to known CalibMode range (None … Cornering)
+    if (mode < 0 || mode > static_cast<int>(CalibMode::Calib_Cornering)) {
+        s->set_error("invalid calib mode");
+        return -2;
+    }
+    s->calib_params = Calib_Params();
+    s->calib_params.mode = static_cast<CalibMode>(mode);
+    s->calib_params.start = start;
+    s->calib_params.end = end;
+    s->calib_params.step = step;
+    // Temp tower / VFA: default nozzle-based resize on (matches desktop)
+    s->calib_params.nozzle_based_resize = true;
+    return 0;
+}
+
+int orca_session_clear_calib(orca_session_t *s)
+{
+    if (!s)
+        return -1;
+    s->calib_params = Calib_Params();
+    s->calib_params.mode = CalibMode::Calib_None;
+    return 0;
+}
+
+int orca_session_get_calib_mode(orca_session_t *s)
+{
+    if (!s)
+        return 0;
+    return static_cast<int>(s->calib_params.mode);
 }
 
 const char *orca_session_last_error(orca_session_t *s)

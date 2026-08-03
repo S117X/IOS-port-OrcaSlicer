@@ -360,6 +360,24 @@ ORCA_API int orca_session_preset_stats(
  */
 ORCA_API void orca_session_purge_option_caches(orca_session_t *s);
 
+/**
+ * Official calibration mode for next slice (Print::set_calib_params).
+ * mode matches Slic3r::CalibMode:
+ *   0=None 1=PA_Line 2=PA_Pattern 3=PA_Tower 4=Auto_PA_Line
+ *   5=Flow_Rate 6=Temp_Tower 7=Vol_speed_Tower 8=VFA_Tower
+ *   9=Retraction_tower 10=Input_shaping_freq 11=Input_shaping_damp 12=Cornering
+ * start/end/step: tower or PA sweep ranges (temps °C, PA unitless, retraction mm, …).
+ * @return 0 on success
+ */
+ORCA_API int orca_session_set_calib(
+    orca_session_t *s, int mode, double start, double end, double step);
+
+/** Clear calibration (mode = None). Next slice is a normal print. */
+ORCA_API int orca_session_clear_calib(orca_session_t *s);
+
+/** Current calib mode (CalibMode int), or 0 if none / null session. */
+ORCA_API int orca_session_get_calib_mode(orca_session_t *s);
+
 ORCA_API const char *orca_session_last_error(orca_session_t *s);
 
 ORCA_API const char *orca_version_string(void);

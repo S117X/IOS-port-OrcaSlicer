@@ -1,14 +1,14 @@
 {
   "status": "porting_to_100",
-  "percent_estimate": 82,
-  "updated": "2026-08-03T12:45:00Z",
+  "percent_estimate": 90,
+  "updated": "2026-08-03T12:40:00Z",
   "branch": "ios-port",
-  "last_focus": "G9 transforms + G10 multi-filament + G13 recent + G12 PrusaLink",
+  "last_focus": "G11 calibration + G6/G12 mDNS discovery + live temps",
   "gates": {
     "G1": true, "G2": true, "G3": true, "G4": true,
-    "G5": true, "G6": false, "G7": true, "G8": true,
-    "G9": true, "G10": true, "G11": false, "G12": false,
+    "G5": true, "G6": true, "G7": true, "G8": true,
+    "G9": true, "G10": true, "G11": true, "G12": true,
     "G13": false, "G14": false, "G15": false, "G16": false
   },
-  "notes": "G9+G10 done. G6/G12 still need mDNS+live temps. G13 partial (recent models). Remaining: G11 calib, G12 discovery/temps, G13 export/import/user filament, G14 cut/repair/grid, G15 analysis, G16 ship. Device BUILD SUCCEEDED after engine rebuild."
+  "notes": "G11: official Calib_Params via orca_session_set_calib + bundled resources/calib (temp tower, flow, PA line, retraction). G6/G12: NWBrowser mDNS (_octoprint/_moonraker/_http) + live nozzle/bed temps from Moonraker/OctoPrint. Device BUILD SUCCEEDED. Remaining: G13 export/import/user filament, G14 cut/repair/grid, G15 analysis, G16 ship."
 }

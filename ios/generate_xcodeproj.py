@@ -25,7 +25,7 @@ def uid():
 IDs = {k: uid() for k in [
     "project", "target", "sources", "resources", "frameworks", "product",
     "swift_app", "swift_engine", "swift_plate", "swift_process", "logo", "assets",
-    "process_profile", "process_profile_fine", "profiles_folder", "scenekit_fw",
+    "process_profile", "process_profile_fine", "profiles_folder", "calib_folder", "scenekit_fw",
     "config_list_proj", "config_list_tgt",
     "debug_proj", "release_proj", "debug_tgt", "release_tgt",
     "group_main", "group_app", "group_products",
@@ -34,6 +34,18 @@ IDs = {k: uid() for k in [
 # Full official vendor trees (~79MB) for all printers/process/filament/covers
 PROFILES_DIR = ROOT / "OrcaSlicerApp" / "Resources" / "profiles"
 has_profiles = PROFILES_DIR.is_dir() and any(PROFILES_DIR.glob("*.json"))
+# Official calibration meshes (temp tower, flow, PA, retraction, …)
+# Resources/ is gitignored (large); sync from repo resources/calib when missing/stale.
+CALIB_DIR = ROOT / "OrcaSlicerApp" / "Resources" / "calib"
+_SRC_CALIB = REPO / "resources" / "calib"
+if _SRC_CALIB.is_dir():
+    import shutil as _shutil
+    CALIB_DIR.parent.mkdir(parents=True, exist_ok=True)
+    if CALIB_DIR.exists():
+        _shutil.rmtree(CALIB_DIR)
+    _shutil.copytree(_SRC_CALIB, CALIB_DIR)
+    print("Synced calib →", CALIB_DIR)
+has_calib = CALIB_DIR.is_dir() and any(CALIB_DIR.rglob("*"))
 
 mac_lib_path = "$(SRCROOT)/../build-macos-headless-arm64/engine_bundle/lib"
 ios_sim_lib_path = "$(SRCROOT)/../build-ios-iphonesimulator-arm64/engine_bundle/lib"
@@ -52,7 +64,7 @@ ios_ld = (
     "-lorca_engine -lc++ -lz -liconv -lexpat "
     "-framework Foundation -framework ModelIO "
     "-framework Security -framework SystemConfiguration "
-    "-framework SceneKit -framework UIKit"
+    "-framework SceneKit -framework UIKit -framework Network"
 )
 
 
@@ -185,7 +197,8 @@ pbx = f'''// !$*UTF8*$!
 		{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; }};
 		{IDs["process_profile_fine"]} /* process_0.16mm_Fine.json in Resources */ = {{isa = PBXBuildFile; fileRef = A1000000000000000000000A /* process_0.16mm_Fine.json */; }};
 ''' + (f'''		{IDs["profiles_folder"]} /* profiles in Resources */ = {{isa = PBXBuildFile; fileRef = A1000000000000000000000B /* profiles */; }};
-''' if has_profiles else '') + f'''/* End PBXBuildFile section */
+''' if has_profiles else '') + (f'''		{IDs["calib_folder"]} /* calib in Resources */ = {{isa = PBXBuildFile; fileRef = A1000000000000000000000D /* calib */; }};
+''' if has_calib else '') + f'''/* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A10000000000000000000001 /* OrcaSlicerApp.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrcaSlicerApp.swift; sourceTree = "<group>"; }};
@@ -199,7 +212,8 @@ pbx = f'''// !$*UTF8*$!
 		A10000000000000000000009 /* process_0.20mm_Standard.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.20mm_Standard.json; sourceTree = "<group>"; }};
 		A1000000000000000000000A /* process_0.16mm_Fine.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.16mm_Fine.json; sourceTree = "<group>"; }};
 ''' + ('''		A1000000000000000000000B /* profiles */ = {isa = PBXFileReference; lastKnownFileType = folder; name = profiles; path = Resources/profiles; sourceTree = "<group>"; };
-''' if has_profiles else '') + f'''		{IDs["product"]} /* OrcaSlicer.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; }};
+''' if has_profiles else '') + ('''		A1000000000000000000000D /* calib */ = {isa = PBXFileReference; lastKnownFileType = folder; name = calib; path = Resources/calib; sourceTree = "<group>"; };
+''' if has_calib else '') + f'''		{IDs["product"]} /* OrcaSlicer.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrcaSlicer.app; sourceTree = BUILT_PRODUCTS_DIR; }};
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -225,7 +239,8 @@ pbx = f'''// !$*UTF8*$!
 				A10000000000000000000009 /* process_0.20mm_Standard.json */,
 				A1000000000000000000000A /* process_0.16mm_Fine.json */,
 ''' + ('''				A1000000000000000000000B /* profiles */,
-''' if has_profiles else '') + f'''			);
+''' if has_profiles else '') + ('''				A1000000000000000000000D /* calib */,
+''' if has_calib else '') + f'''			);
 			path = OrcaSlicerApp;
 			sourceTree = "<group>";
 		}};
@@ -295,7 +310,8 @@ pbx = f'''// !$*UTF8*$!
 				{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */,
 				{IDs["process_profile_fine"]} /* process_0.16mm_Fine.json in Resources */,
 ''' + (f'''				{IDs["profiles_folder"]} /* profiles in Resources */,
-''' if has_profiles else '') + f'''			);
+''' if has_profiles else '') + (f'''				{IDs["calib_folder"]} /* calib in Resources */,
+''' if has_calib else '') + f'''			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
 /* End PBXResourcesBuildPhase section */
@@ -391,3 +407,4 @@ print("has_mac_engine=", has_mac_engine)
 print("has_ios_sim_engine=", has_ios_sim_engine)
 print("has_ios_dev_engine=", has_ios_dev_engine)
 print("has_profiles=", has_profiles, PROFILES_DIR if has_profiles else "")
+print("has_calib=", has_calib, CALIB_DIR if has_calib else "")
