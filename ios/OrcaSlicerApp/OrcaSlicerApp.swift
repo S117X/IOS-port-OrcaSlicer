@@ -2001,9 +2001,11 @@ struct OrcaRootView: View {
                 paintMode: isPaintGizmo && mainTab == .prepare && engine.hasModel,
                 paintOverlay: isPaintGizmo ? engine.paintOverlayMesh : nil,
                 paintOverlayColor: paintOverlayUIColor,
-                onDragCommit: { dx, dy in
-                    // Move selected object (index from engine.selectedObjectIndex)
-                    engine.translate(dx: dx, dy: dy, recordUndo: true)
+                onDragCommit: { dx, dy, objIdx in
+                    // Use index captured at drag start — never rely on post-tap selection
+                    let idx = objIdx >= 0 ? objIdx : nil
+                    if let idx { engine.selectObject(at: idx) }
+                    engine.translate(dx: dx, dy: dy, index: idx, recordUndo: true)
                     status = engine.lastMessage
                 },
                 onDragLive: { dx, dy in
@@ -2015,6 +2017,7 @@ struct OrcaRootView: View {
                     if idx < 0 {
                         engine.clearSelection()
                     } else {
+                        // Only toggle-deselect on intentional re-tap (not after drag)
                         engine.selectObject(at: idx)
                     }
                     status = engine.lastMessage

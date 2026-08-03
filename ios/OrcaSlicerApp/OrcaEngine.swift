@@ -1040,14 +1040,11 @@ final class OrcaEngine: ObservableObject {
             clearSelection()
             return
         }
-        // Tap same object again → deselect
-        if selectedObjectIndex == index {
-            clearSelection()
-            return
-        }
+        // Keep selection if already selected (re-tap empty bed or Deselect chip to clear).
+        // Do NOT toggle-off on re-tap — iOS fires a tap after drag and was wiping selection.
         selectedObjectIndex = index
         let name = objectNames.indices.contains(index) ? objectNames[index] : "Object \(index + 1)"
-        lastMessage = "Selected \(name) · tap again or empty plate to deselect"
+        lastMessage = "Selected \(name) · tap empty plate or Deselect to clear"
     }
 
     func clearSelection() {
@@ -1122,12 +1119,24 @@ final class OrcaEngine: ObservableObject {
     func translate(dx: Float, dy: Float, dz: Float = 0, index: Int? = nil, recordUndo: Bool = true) {
         #if ORCA_LINKED
         guard let s = session, hasModel else { return }
+        // Prefer explicit index from drag; fall back to selection. Never silently no-op on bad index.
+        var idx = index ?? selectedObjectIndex
+        if idx < 0 {
+            // No selection: move all objects (same delta)
+            idx = -1
+        } else if idx >= objectCount && objectCount > 0 {
+            idx = 0
+        }
         if recordUndo { pushUndoSnapshot(label: "move") }
-        let idx = Int32(index ?? selectedObjectIndex)
-        let rc = orca_session_translate_object(s, idx, dx, dy, dz)
+        let rc = orca_session_translate_object(s, Int32(idx), dx, dy, dz)
         if rc == 0 {
-            refreshMesh(); refreshBounds(); refreshModelInfo()
-            lastMessage = String(format: "Moved Δ(%.1f, %.1f, %.1f) mm", dx, dy, dz)
+            // Keep selection on the moved object
+            if idx >= 0 { selectedObjectIndex = idx }
+            refreshMesh()
+            refreshBounds()
+            refreshModelInfo()
+            lastMessage = String(format: "Moved Δ(%.1f, %.1f) mm · obj %@", dx, dy,
+                                 idx < 0 ? "all" : "\(idx + 1)")
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "translate failed"
         }

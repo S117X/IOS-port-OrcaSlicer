@@ -81,6 +81,10 @@ struct orca_session {
     // Official calibration (applied at slice via Print::set_calib_params)
     Calib_Params calib_params;
 
+    // Assembly explode baselines (instance XY before explode)
+    bool explode_saved{false};
+    std::vector<Vec3d> explode_origin_offsets;
+
     // Official system preset catalog
     std::unique_ptr<PresetBundle> preset_bundle;
     bool        presets_loaded{false};
@@ -926,13 +930,24 @@ int orca_session_translate_object(
         return -1;
     try {
         const Vec3d delta(dx, dy, dz);
+        int touched = 0;
         for_each_object(s, index, [&](ModelObject *obj) {
+            if (obj->instances.empty()) {
+                // Ensure at least one instance so offset can stick
+                obj->add_instance();
+            }
             for (ModelInstance *inst : obj->instances) {
                 if (!inst) continue;
                 inst->set_offset(inst->get_offset() + delta);
+                ++touched;
             }
             obj->invalidate_bounding_box();
+            // Do NOT ensure_on_bed here — it can shift XY in surprising ways after a free move
         });
+        if (touched == 0) {
+            s->set_error("translate: no instances updated");
+            return -3;
+        }
         return 0;
     } catch (const std::exception &ex) {
         s->set_error(std::string("translate: ") + ex.what());

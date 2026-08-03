@@ -33,15 +33,15 @@ struct PlateSceneView: UIViewRepresentable {
     var paintOverlay: MeshGeometry? = nil
     /// Overlay color for current paint kind
     var paintOverlayColor: UIColor = UIColor(red: 0.2, green: 0.85, blue: 0.35, alpha: 0.85)
-    /// Called with total Δx, Δy mm when a drag ends (official translate_object).
-    var onDragCommit: ((Float, Float) -> Void)? = nil
+    /// Called when a drag ends: Δx, Δy mm and the object index that was dragged (-1 = all).
+    var onDragCommit: ((Float, Float, Int) -> Void)? = nil
     /// Live visual feedback during drag (optional status text).
     var onDragLive: ((Float, Float) -> Void)? = nil
     /// Measure tap in slic3r coordinates (x,y,z mm).
     var onMeasurePick: ((SIMD3<Float>) -> Void)? = nil
     /// Paint hit in slic3r XYZ mm (first stroke of a gesture sets recordUndo via parent).
     var onPaintHit: ((SIMD3<Float>, Bool /*isBegin*/) -> Void)? = nil
-    /// User tapped an object on the plate.
+    /// User tapped an object on the plate (-1 = empty bed / deselect).
     var onSelectObject: ((Int) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNView {
@@ -103,10 +103,17 @@ struct PlateSceneView: UIViewRepresentable {
             }
         }
 
-        // Mesh model(s) — per-object nodes for hit-test/select; skip rebuild while dragging
-        let perKey = objectMeshes.map { "\($0.vertexCount)-\($0.min.x)-\($0.max.x)" }.joined(separator: "|")
-        let meshKey = (mesh.map { "\($0.vertexCount)-\($0.indices.count)-\($0.min.x)-\($0.max.x)" } ?? "nil")
-            + "|sel=\(selectedObjectIndex)|objs=\(perKey)"
+        // Mesh model(s) — per-object nodes for hit-test/select; skip rebuild while dragging.
+        // Include full AABB so instance translate always invalidates the SceneKit nodes.
+        let perKey = objectMeshes.enumerated().map { i, m in
+            String(format: "%d:%d:%.3f,%.3f,%.3f,%.3f,%.3f,%.3f",
+                   i, m.vertexCount,
+                   m.min.x, m.min.y, m.min.z, m.max.x, m.max.y, m.max.z)
+        }.joined(separator: "|")
+        let meshKey = (mesh.map {
+            String(format: "c:%d:%.3f,%.3f,%.3f,%.3f",
+                   $0.vertexCount, $0.min.x, $0.min.y, $0.max.x, $0.max.y)
+        } ?? "nil") + "|sel=\(selectedObjectIndex)|objs=\(perKey)"
         if !context.coordinator.isDragging, context.coordinator.lastMeshKey != meshKey {
             content.childNode(withName: "model", recursively: false)?.removeFromParentNode()
             let root = SCNNode()
@@ -396,6 +403,10 @@ struct PlateSceneView: UIViewRepresentable {
         var isDragging = false
         /// Accumulated visual offset in slic3r XY mm applied to model node while dragging
         var visualOffset: SIMD2<Float> = .zero
+        /// Object index captured at drag begin (survives accidental deselect before commit)
+        var dragObjectIndex: Int = -1
+        /// Ignore bed-tap deselect right after a drag (iOS often delivers a tap after pan end)
+        var suppressSelectUntil: TimeInterval = 0
         private var dragStartBedXY: SIMD2<Float>?
         private var lastBedXY: SIMD2<Float>?
         private var paintStrokeActive = false
@@ -457,6 +468,10 @@ struct PlateSceneView: UIViewRepresentable {
 
         @objc private func handleTap(_ gr: UITapGestureRecognizer) {
             guard let view = view, let parent = parent else { return }
+            // After a drag, iOS often synthesizes a tap — ignore briefly so we don't deselect
+            if Date().timeIntervalSince1970 < suppressSelectUntil {
+                return
+            }
             let screen = gr.location(in: view)
             if parent.paintMode {
                 if let p = hitModelSlic3r(view: view, screen: screen) {
@@ -479,7 +494,6 @@ struct PlateSceneView: UIViewRepresentable {
                 if let idx = hitObjectIndex(view: view, screen: screen) {
                     parent.onSelectObject?(idx)
                 } else {
-                    // Empty plate / bed → clear selection (index -1)
                     parent.onSelectObject?(-1)
                 }
             }
@@ -528,8 +542,12 @@ struct PlateSceneView: UIViewRepresentable {
             case .began:
                 // Prefer hit on object — select it, then drag. Move gizmo also allows bed drag.
                 if let idx = hitObjectIndex(view: view, screen: pt) {
+                    dragObjectIndex = idx
                     parent.onSelectObject?(idx)
-                } else if !parent.moveMode {
+                } else if parent.moveMode {
+                    // Move gizmo: drag selected (or all if none)
+                    dragObjectIndex = parent.selectedObjectIndex
+                } else {
                     // Select mode on empty bed: fail this pan so SceneKit orbit can run
                     gr.state = .failed
                     return
@@ -551,20 +569,32 @@ struct PlateSceneView: UIViewRepresentable {
                 else { return }
                 let total = SIMD2(bedXY.x - start.x, bedXY.y - start.y)
                 visualOffset = total
-                applyVisualOffset(total, selectedIndex: parent.selectedObjectIndex)
+                applyVisualOffset(total, selectedIndex: dragObjectIndex)
                 lastBedXY = bedXY
                 parent.onDragLive?(total.x, total.y)
 
             case .ended, .cancelled, .failed:
                 let total = visualOffset
                 let wasDragging = isDragging
+                let objIdx = dragObjectIndex
                 isDragging = false
                 dragStartBedXY = nil
                 lastBedXY = nil
-                applyVisualOffset(.zero, selectedIndex: parent.selectedObjectIndex)
-                visualOffset = .zero
+                // Keep visual offset until engine commits + mesh rebuild (avoids snap-to-old-pose)
                 if wasDragging, abs(total.x) > 0.05 || abs(total.y) > 0.05 {
-                    parent.onDragCommit?(total.x, total.y)
+                    // Suppress synthetic tap that would deselect right after drag
+                    suppressSelectUntil = Date().timeIntervalSince1970 + 0.35
+                    parent.onDragCommit?(total.x, total.y, objIdx)
+                    // Clear visual offset after a tick — mesh should already include the move
+                    DispatchQueue.main.async {
+                        self.applyVisualOffset(.zero, selectedIndex: objIdx)
+                        self.visualOffset = .zero
+                        self.dragObjectIndex = -1
+                    }
+                } else {
+                    applyVisualOffset(.zero, selectedIndex: objIdx)
+                    visualOffset = .zero
+                    dragObjectIndex = -1
                 }
                 view.allowsCameraControl = !(parent.moveMode)
 
