@@ -1,4 +1,9 @@
-// SceneKit prepare view: real mesh from libslic3r + orbit / pan / zoom.
+// SceneKit prepare view: build plate + real mesh from libslic3r + G-code paths.
+// Coordinate convention:
+//   libslic3r is Z-up (XY bed). SceneKit is Y-up.
+//   All print geometry lives under "content" node rotated R_x(-90°):
+//     (x, y, z)_slic3r  →  (x, z, -y)_scenekit
+//   so the bed stays a simple XY plane and the grid always sits under the model.
 
 import SwiftUI
 import SceneKit
@@ -16,54 +21,70 @@ struct PlateSceneView: UIViewRepresentable {
         let view = SCNView()
         view.scene = makeScene()
         view.backgroundColor = UIColor(red: 0x2D / 255, green: 0x2D / 255, blue: 0x31 / 255, alpha: 1)
-        view.allowsCameraControl = true // orbit / pan / zoom (built-in)
-        view.autoenablesDefaultLighting = true
+        view.allowsCameraControl = true
+        view.autoenablesDefaultLighting = false
         view.antialiasingMode = .multisampling4X
         view.defaultCameraController.interactionMode = .orbitTurntable
         view.defaultCameraController.inertiaEnabled = true
         view.defaultCameraController.maximumVerticalAngle = 89
         view.defaultCameraController.minimumVerticalAngle = 5
-        view.pointOfView = view.scene?.rootNode.childNode(withName: "camera", recursively: false)
+        if let cam = view.scene?.rootNode.childNode(withName: "camera", recursively: false) {
+            view.pointOfView = cam
+        }
         context.coordinator.view = view
+        context.coordinator.lastBed = bedSize
         return view
     }
 
     func updateUIView(_ view: SCNView, context: Context) {
-        guard let scene = view.scene else { return }
+        guard let scene = view.scene,
+              let content = scene.rootNode.childNode(withName: "content", recursively: false)
+        else { return }
+
+        // Bed size / recreate if missing
+        let bedMissing = content.childNode(withName: "bed", recursively: false) == nil
+        if bedMissing
+            || context.coordinator.lastBed.x != bedSize.x
+            || context.coordinator.lastBed.y != bedSize.y {
+            content.childNode(withName: "bed", recursively: false)?.removeFromParentNode()
+            let bed = makeBedNode(size: bedSize, accent: accent)
+            bed.name = "bed"
+            content.addChildNode(bed)
+            context.coordinator.lastBed = bedSize
+            // Re-frame when bed changes so plate stays in view
+            if let mesh {
+                context.coordinator.frameCamera(view: view, mesh: mesh, bedSize: bedSize)
+            } else {
+                context.coordinator.frameCameraOnBed(view: view, bedSize: bedSize)
+            }
+        }
 
         // Mesh model
-        let meshKey = mesh.map { "\($0.vertexCount)-\($0.indices.count)" } ?? "nil"
+        let meshKey = mesh.map { "\($0.vertexCount)-\($0.indices.count)-\($0.min.x)-\($0.max.x)" } ?? "nil"
         if context.coordinator.lastMeshKey != meshKey {
-            scene.rootNode.childNode(withName: "model", recursively: false)?.removeFromParentNode()
+            content.childNode(withName: "model", recursively: false)?.removeFromParentNode()
             if let mesh {
                 let node = mesh.makeNode(color: accent)
                 node.name = "model"
-                scene.rootNode.addChildNode(node)
+                content.addChildNode(node)
                 context.coordinator.frameCamera(view: view, mesh: mesh, bedSize: bedSize)
+            } else {
+                context.coordinator.frameCameraOnBed(view: view, bedSize: bedSize)
             }
             context.coordinator.lastMeshKey = meshKey
         }
 
-        // G-code toolpaths (Preview tab)
-        scene.rootNode.childNode(withName: "gcode", recursively: false)?.removeFromParentNode()
+        // G-code toolpaths (Preview tab) — also under content (Z-up)
+        content.childNode(withName: "gcode", recursively: false)?.removeFromParentNode()
         if showGCode, let gcodeNode {
-            // Clone so SceneKit owns a copy (source node may be re-used)
             let clone = gcodeNode.clone()
             clone.name = "gcode"
-            scene.rootNode.addChildNode(clone)
-            // Dim solid mesh when previewing paths
-            scene.rootNode.childNode(withName: "model", recursively: false)?.opacity = 0.18
+            // G-code nodes were previously self-rotated; strip extra rotation if present
+            clone.eulerAngles = SCNVector3Zero
+            content.addChildNode(clone)
+            content.childNode(withName: "model", recursively: false)?.opacity = 0.15
         } else {
-            scene.rootNode.childNode(withName: "model", recursively: false)?.opacity = 1.0
-        }
-
-        // Bed size change
-        if context.coordinator.lastBed.x != bedSize.x || context.coordinator.lastBed.y != bedSize.y {
-            scene.rootNode.childNode(withName: "bed", recursively: false)?.removeFromParentNode()
-            let bed = makeBedNode(size: bedSize, accent: accent)
-            bed.name = "bed"
-            scene.rootNode.addChildNode(bed)
-            context.coordinator.lastBed = bedSize
+            content.childNode(withName: "model", recursively: false)?.opacity = 1.0
         }
     }
 
@@ -72,12 +93,12 @@ struct PlateSceneView: UIViewRepresentable {
     private func makeScene() -> SCNScene {
         let scene = SCNScene()
 
-        // Ambient + key light
+        // Lights (SceneKit world / Y-up)
         let ambient = SCNNode()
         ambient.light = {
             let l = SCNLight()
             l.type = .ambient
-            l.intensity = 400
+            l.intensity = 500
             l.color = UIColor.white
             return l
         }()
@@ -87,34 +108,55 @@ struct PlateSceneView: UIViewRepresentable {
         key.light = {
             let l = SCNLight()
             l.type = .directional
-            l.intensity = 800
+            l.intensity = 900
             l.castsShadow = true
+            l.shadowMode = .deferred
+            l.shadowColor = UIColor.black.withAlphaComponent(0.35)
             return l
         }()
-        key.eulerAngles = SCNVector3(-Float.pi / 3, Float.pi / 4, 0)
+        key.eulerAngles = SCNVector3(-Float.pi / 3.2, Float.pi / 4.5, 0)
+        key.position = SCNVector3(0, 400, 200)
         scene.rootNode.addChildNode(key)
 
-        // Build plate
+        let fill = SCNNode()
+        fill.light = {
+            let l = SCNLight()
+            l.type = .directional
+            l.intensity = 280
+            return l
+        }()
+        fill.eulerAngles = SCNVector3(-Float.pi / 6, -Float.pi / 3, 0)
+        scene.rootNode.addChildNode(fill)
+
+        // Content root: Z-up → Y-up
+        let content = SCNNode()
+        content.name = "content"
+        content.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
+        scene.rootNode.addChildNode(content)
+
+        // Build plate (XY in slic3r / content space)
         let bed = makeBedNode(size: bedSize, accent: accent)
         bed.name = "bed"
-        scene.rootNode.addChildNode(bed)
+        content.addChildNode(bed)
 
-        // Default camera
+        // Camera in SceneKit world space
         let cam = SCNNode()
         cam.name = "camera"
         cam.camera = SCNCamera()
-        cam.camera?.zNear = 0.1
-        cam.camera?.zFar = 5000
-        cam.camera?.fieldOfView = 45
+        cam.camera?.zNear = 0.5
+        cam.camera?.zFar = 8000
+        cam.camera?.fieldOfView = 42
+        // Default 3/4 view of a 220mm plate (slic3r center 110,110 → world 110, 0, -110)
         let cx = bedSize.x * 0.5
         let cy = bedSize.y * 0.5
-        cam.position = SCNVector3(cx + 120, -160, 140)
-        cam.look(at: SCNVector3(cx, cy, 0))
+        cam.position = SCNVector3(cx + 180, 200, -cy + 220)
+        cam.look(at: SCNVector3(cx, 0, -cy))
         scene.rootNode.addChildNode(cam)
 
         return scene
     }
 
+    /// Bed in content/Z-up space: SCNPlane is already XY, no extra rotation.
     private func makeBedNode(size: SIMD2<Float>, accent: UIColor) -> SCNNode {
         let w = CGFloat(size.x)
         let h = CGFloat(size.y)
@@ -123,30 +165,42 @@ struct PlateSceneView: UIViewRepresentable {
         plane.heightSegmentCount = 1
 
         let mat = SCNMaterial()
-        mat.diffuse.contents = UIColor(red: 0.20, green: 0.21, blue: 0.23, alpha: 1)
-        mat.roughness.contents = 0.85
-        mat.metalness.contents = 0.05
+        mat.diffuse.contents = UIColor(red: 0.18, green: 0.19, blue: 0.21, alpha: 1)
+        mat.roughness.contents = 0.9
+        mat.metalness.contents = 0.08
         mat.isDoubleSided = true
+        mat.locksAmbientWithDiffuse = true
         plane.materials = [mat]
 
         let node = SCNNode(geometry: plane)
-        // XY bed, Z up (SceneKit default is Y-up — rotate plate to Z-up)
-        node.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
-        node.position = SCNVector3(size.x * 0.5, size.y * 0.5, 0)
+        // Center of plate in XY (slic3r printable origin usually 0,0)
+        node.position = SCNVector3(size.x * 0.5, size.y * 0.5, -0.02)
 
-        // Grid lines as child
+        // Grid (local plane coords: origin at plane center)
         let grid = makeGridNode(size: size, accent: accent)
         node.addChildNode(grid)
 
-        // Orange/teal rim
-        let rim = SCNPlane(width: w + 1.2, height: h + 1.2)
+        // Teal rim slightly larger, behind plate surface
+        let rim = SCNPlane(width: w + 2.0, height: h + 2.0)
         let rimMat = SCNMaterial()
-        rimMat.diffuse.contents = accent.withAlphaComponent(0.35)
+        rimMat.diffuse.contents = accent.withAlphaComponent(0.45)
         rimMat.isDoubleSided = true
+        rimMat.lightingModel = .constant
         rim.materials = [rimMat]
         let rimNode = SCNNode(geometry: rim)
-        rimNode.position = SCNVector3(0, 0, -0.05)
+        rimNode.position = SCNVector3(0, 0, -0.08)
         node.addChildNode(rimNode)
+
+        // Origin marker (0,0 corner) — small accent cube
+        let origin = SCNBox(width: 4, height: 4, length: 1.5, chamferRadius: 0)
+        let oMat = SCNMaterial()
+        oMat.diffuse.contents = accent
+        oMat.lightingModel = .constant
+        origin.materials = [oMat]
+        let originNode = SCNNode(geometry: origin)
+        // Plane local: (-w/2, -h/2) is bed (0,0)
+        originNode.position = SCNVector3(-size.x * 0.5 + 2, -size.y * 0.5 + 2, 0.8)
+        node.addChildNode(originNode)
 
         return node
     }
@@ -159,37 +213,65 @@ struct PlateSceneView: UIViewRepresentable {
         let y0: Float = -size.y * 0.5
         let x1 = x0 + size.x
         let y1 = y0 + size.y
+
         var x = x0
         while x <= x1 + 0.01 {
-            verts.append(SCNVector3(x, y0, 0.02))
-            verts.append(SCNVector3(x, y1, 0.02))
+            verts.append(SCNVector3(x, y0, 0.05))
+            verts.append(SCNVector3(x, y1, 0.05))
             x += step
         }
         var y = y0
         while y <= y1 + 0.01 {
-            verts.append(SCNVector3(x0, y, 0.02))
-            verts.append(SCNVector3(x1, y, 0.02))
+            verts.append(SCNVector3(x0, y, 0.05))
+            verts.append(SCNVector3(x1, y, 0.05))
             y += step
         }
-        let src = SCNGeometrySource(vertices: verts)
-        var indices: [Int32] = []
-        for i in 0..<(verts.count / 2) {
-            indices.append(Int32(i * 2))
-            indices.append(Int32(i * 2 + 1))
+
+        // Major every 50mm (brighter)
+        var majorVerts: [SCNVector3] = []
+        x = x0
+        while x <= x1 + 0.01 {
+            if abs(x.truncatingRemainder(dividingBy: 50)) < 0.01 || abs(x) < 0.01 {
+                majorVerts.append(SCNVector3(x, y0, 0.06))
+                majorVerts.append(SCNVector3(x, y1, 0.06))
+            }
+            x += step
         }
-        let idxData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
-        let elem = SCNGeometryElement(
-            data: idxData,
-            primitiveType: .line,
-            primitiveCount: indices.count / 2,
-            bytesPerIndex: MemoryLayout<Int32>.size
-        )
-        let geo = SCNGeometry(sources: [src], elements: [elem])
-        let mat = SCNMaterial()
-        mat.diffuse.contents = UIColor.white.withAlphaComponent(0.18)
-        mat.lightingModel = .constant
-        geo.materials = [mat]
-        parent.geometry = geo
+        y = y0
+        while y <= y1 + 0.01 {
+            if abs(y.truncatingRemainder(dividingBy: 50)) < 0.01 || abs(y) < 0.01 {
+                majorVerts.append(SCNVector3(x0, y, 0.06))
+                majorVerts.append(SCNVector3(x1, y, 0.06))
+            }
+            y += step
+        }
+
+        func lineNode(from verts: [SCNVector3], alpha: CGFloat) -> SCNNode {
+            guard verts.count >= 2 else { return SCNNode() }
+            let src = SCNGeometrySource(vertices: verts)
+            var indices: [Int32] = []
+            for i in 0..<(verts.count / 2) {
+                indices.append(Int32(i * 2))
+                indices.append(Int32(i * 2 + 1))
+            }
+            let idxData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+            let elem = SCNGeometryElement(
+                data: idxData,
+                primitiveType: .line,
+                primitiveCount: indices.count / 2,
+                bytesPerIndex: MemoryLayout<Int32>.size
+            )
+            let geo = SCNGeometry(sources: [src], elements: [elem])
+            let mat = SCNMaterial()
+            mat.diffuse.contents = UIColor.white.withAlphaComponent(alpha)
+            mat.lightingModel = .constant
+            mat.isDoubleSided = true
+            geo.materials = [mat]
+            return SCNNode(geometry: geo)
+        }
+
+        parent.addChildNode(lineNode(from: verts, alpha: 0.14))
+        parent.addChildNode(lineNode(from: majorVerts, alpha: 0.32))
         return parent
     }
 
@@ -198,21 +280,56 @@ struct PlateSceneView: UIViewRepresentable {
         var lastMeshKey: String = ""
         var lastBed: SIMD2<Float> = SIMD2(0, 0)
 
+        /// World-space target of bed center after content R_x(-90): (cx, 0, -cy)
+        private func bedCenterWorld(bedSize: SIMD2<Float>) -> SCNVector3 {
+            SCNVector3(bedSize.x * 0.5, 0, -bedSize.y * 0.5)
+        }
+
+        func frameCameraOnBed(view: SCNView, bedSize: SIMD2<Float>) {
+            guard let cam = view.scene?.rootNode.childNode(withName: "camera", recursively: false) else { return }
+            let target = bedCenterWorld(bedSize: bedSize)
+            let plate = max(bedSize.x, bedSize.y, 100)
+            let dist = plate * 1.05
+            cam.position = SCNVector3(
+                target.x + dist * 0.55,
+                dist * 0.72,
+                target.z + dist * 0.75
+            )
+            cam.look(at: target)
+            view.pointOfView = cam
+        }
+
         func frameCamera(view: SCNView, mesh: MeshGeometry, bedSize: SIMD2<Float>) {
             guard let cam = view.scene?.rootNode.childNode(withName: "camera", recursively: false) else { return }
-            // Mesh node is rotated -90° around X (slic3r Z-up → SceneKit Y-up):
-            // (x,y,z)_slic3r → (x, z, -y)_scenekit
+
+            // Mesh in slic3r Z-up under content; world after R_x(-90): (x, z, -y)
             let mx = (mesh.min.x + mesh.max.x) * 0.5
             let my = (mesh.min.y + mesh.max.y) * 0.5
             let mz = (mesh.min.z + mesh.max.z) * 0.5
-            let target = SCNVector3(mx, mz, -my)
-            let meshExt = max(mesh.max.x - mesh.min.x, mesh.max.y - mesh.min.y, mesh.max.z - mesh.min.z, 10)
-            // Frame model tightly enough to see a 20mm cube, still leave bed context
-            let dist = max(meshExt * 4.5, 80)
+            let modelWorld = SCNVector3(mx, mz, -my)
+
+            // Blend toward bed center so the plate stays visible even for small models
+            let bed = bedCenterWorld(bedSize: bedSize)
+            let target = SCNVector3(
+                modelWorld.x * 0.35 + bed.x * 0.65,
+                max(modelWorld.y, 0) * 0.5,
+                modelWorld.z * 0.35 + bed.z * 0.65
+            )
+
+            let meshExt = max(
+                mesh.max.x - mesh.min.x,
+                mesh.max.y - mesh.min.y,
+                mesh.max.z - mesh.min.z,
+                15
+            )
+            let plate = max(bedSize.x, bedSize.y, 100)
+            // Pull back enough to include most of the plate + model (not a tight cube-only crop)
+            let dist = max(meshExt * 3.5, plate * 0.55, 140)
+
             cam.position = SCNVector3(
-                mx + dist * 0.65,
-                mz + dist * 0.55,
-                -my + dist * 0.9
+                target.x + dist * 0.55,
+                dist * 0.65,
+                target.z + dist * 0.8
             )
             cam.look(at: target)
             view.pointOfView = cam
@@ -223,13 +340,14 @@ struct PlateSceneView: UIViewRepresentable {
 // MARK: - Mesh from C API
 
 struct MeshGeometry {
-    var positions: [Float] // xyz * n
+    var positions: [Float] // xyz * n  (slic3r Z-up)
     var indices: [UInt32]
     var min: SIMD3<Float>
     var max: SIMD3<Float>
 
     var vertexCount: Int { positions.count / 3 }
 
+    /// Node lives under "content" (Z-up) — no extra euler rotation.
     func makeNode(color: UIColor) -> SCNNode {
         let vcount = vertexCount
         guard vcount > 0, !indices.isEmpty else { return SCNNode() }
@@ -246,13 +364,13 @@ struct MeshGeometry {
             dataStride: MemoryLayout<Float>.size * 3
         )
 
-        // Compute smooth-ish normals per vertex (flat accumulation)
         var normals = [Float](repeating: 0, count: positions.count)
         let triCount = indices.count / 3
         for t in 0..<triCount {
             let i0 = Int(indices[t * 3])
             let i1 = Int(indices[t * 3 + 1])
             let i2 = Int(indices[t * 3 + 2])
+            guard i0 < vcount, i1 < vcount, i2 < vcount else { continue }
             let ax = positions[i0 * 3], ay = positions[i0 * 3 + 1], az = positions[i0 * 3 + 2]
             let bx = positions[i1 * 3], by = positions[i1 * 3 + 1], bz = positions[i1 * 3 + 2]
             let cx = positions[i2 * 3], cy = positions[i2 * 3 + 1], cz = positions[i2 * 3 + 2]
@@ -303,39 +421,27 @@ struct MeshGeometry {
         let geo = SCNGeometry(sources: [source, nSource], elements: [element])
         let mat = SCNMaterial()
         mat.diffuse.contents = color
-        mat.metalness.contents = 0.15
-        mat.roughness.contents = 0.45
+        mat.metalness.contents = 0.12
+        mat.roughness.contents = 0.48
         mat.isDoubleSided = false
         geo.materials = [mat]
 
-        let node = SCNNode(geometry: geo)
-        // Engine uses Z-up; SceneKit Y-up — rotate model so Z becomes Y
-        // Actually bed is rotated -Float.pi/2 so bed XY is horizontal in SceneKit.
-        // Model from slic3r is Z-up with XY on bed. Apply same rotation as bed children.
-        // Model positions are in world mm with Z up. Our bed plane is in XY at z=0 after
-        // rotating plane from default (which faces +Z in local, after -90 X faces +Y...).
-        //
-        // SceneKit: Y up. Slic3r: Z up, XY bed.
-        // Convert: (x, y, z)_slic3r -> (x, z, -y)_scenekit  OR rotate -90 around X:
-        // R_x(-90): (x,y,z) -> (x, z, -y) wait R_x(θ): y' = y cos - z sin, z' = y sin + z cos
-        // R_x(-π/2): y' = z, z' = -y  => (x, z, -y)
-        node.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
-        return node
+        // No eulerAngles — parent "content" already converts Z-up → Y-up
+        return SCNNode(geometry: geo)
     }
 }
 
-// MARK: - G-code path preview (simple extrusion moves)
+// MARK: - G-code path preview (slic3r Z-up; parent content rotates)
 
 struct GCodePathGeometry {
     struct Segment {
         var points: [SCNVector3]
-        var feature: String // Orca ;TYPE: value
+        var feature: String
     }
     var segments: [Segment]
     var zMin: Float = 0
     var zMax: Float = 0
 
-    /// Full parse of extrusion moves; honors Orca `;TYPE:` feature comments.
     static func parse(url: URL, maxPoints: Int = 120_000) -> GCodePathGeometry? {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         var x: Float = 0, y: Float = 0, z: Float = 0
@@ -358,8 +464,7 @@ struct GCodePathGeometry {
             let s = line.trimmingCharacters(in: .whitespaces)
             if s.hasPrefix(";TYPE:") || s.hasPrefix(";TYPE :") {
                 flush()
-                let raw = s.dropFirst(6).trimmingCharacters(in: .whitespaces)
-                feature = String(raw)
+                feature = String(s.dropFirst(6).trimmingCharacters(in: .whitespaces))
                 continue
             }
             guard s.hasPrefix("G0") || s.hasPrefix("G1") || s.hasPrefix("g0") || s.hasPrefix("g1") else { continue }
@@ -374,9 +479,8 @@ struct GCodePathGeometry {
                 }
             }
             if hasE {
-                let p = SCNVector3(nx, ny, nz)
                 if cur.isEmpty { cur.append(SCNVector3(x, y, z)) }
-                cur.append(p)
+                cur.append(SCNVector3(nx, ny, nz))
                 zMin = min(zMin, nz)
                 zMax = max(zMax, nz)
                 total += 1
@@ -391,7 +495,6 @@ struct GCodePathGeometry {
         return GCodePathGeometry(segments: segs, zMin: zMin, zMax: zMax)
     }
 
-    /// Keep only points with Z <= maxZ (layer slider).
     func filtered(maxZ: Float) -> GCodePathGeometry {
         var out: [Segment] = []
         for seg in segments {
@@ -405,21 +508,20 @@ struct GCodePathGeometry {
 
     static func color(for feature: String) -> UIColor {
         let f = feature.lowercased()
-        // Colors inspired by Orca/Bambu feature palette (approx)
         if f.contains("outer wall") || f.contains("outer_wall") {
-            return UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 1) // orange
+            return UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 1)
         }
         if f.contains("inner wall") || f.contains("inner_wall") {
-            return UIColor(red: 0.95, green: 0.85, blue: 0.20, alpha: 1) // yellow
+            return UIColor(red: 0.95, green: 0.85, blue: 0.20, alpha: 1)
         }
         if f.contains("top") {
-            return UIColor(red: 0.55, green: 0.35, blue: 0.85, alpha: 1) // purple
+            return UIColor(red: 0.55, green: 0.35, blue: 0.85, alpha: 1)
         }
         if f.contains("bottom") {
-            return UIColor(red: 0.30, green: 0.55, blue: 0.95, alpha: 1) // blue
+            return UIColor(red: 0.30, green: 0.55, blue: 0.95, alpha: 1)
         }
         if f.contains("sparse") || f.contains("internal") || f.contains("infill") {
-            return UIColor(red: 0.25, green: 0.75, blue: 0.55, alpha: 1) // green
+            return UIColor(red: 0.25, green: 0.75, blue: 0.55, alpha: 1)
         }
         if f.contains("support") {
             return UIColor(red: 0.55, green: 0.55, blue: 0.60, alpha: 1)
@@ -430,10 +532,10 @@ struct GCodePathGeometry {
         if f.contains("bridge") {
             return UIColor(red: 0.20, green: 0.75, blue: 0.85, alpha: 1)
         }
-        // default Orca teal
         return UIColor(red: 0, green: 150 / 255, blue: 136 / 255, alpha: 1)
     }
 
+    /// Parent "content" applies Z-up → Y-up; do not rotate this node.
     func makeNode(color: UIColor) -> SCNNode {
         let root = SCNNode()
         root.name = "gcode"
@@ -459,7 +561,6 @@ struct GCodePathGeometry {
             geo.materials = [mat]
             root.addChildNode(SCNNode(geometry: geo))
         }
-        root.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
         return root
     }
 }
