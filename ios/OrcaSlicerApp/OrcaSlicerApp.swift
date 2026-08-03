@@ -648,10 +648,16 @@ struct OrcaRootView: View {
     @State private var topShells = "3"
     @State private var bottomShells = "3"
     @State private var supportOn = false
-    @State private var ironingOn = false
-    @State private var brimType = "no_brim"
+    @State private var brimType = "auto_brim"
+    @State private var brimWidth = "5"
+    @State private var supportType = "normal(auto)"
+    @State private var wallGenerator = "arachne"
+    @State private var seamPosition = "aligned"
+    @State private var ironingType = "no ironing"
+    @State private var infillPattern = "grid"
     @State private var outerWallSpeed = "60"
     @State private var sparseSpeed = "100"
+    @State private var filamentDiameter = "1.75"
     @State private var printerSearch = ""
     @State private var processSearch = ""
     @State private var filamentSearch = ""
@@ -793,6 +799,53 @@ struct OrcaRootView: View {
                         if let mesh = engine.mesh {
                             labeled("Mesh", "\(mesh.vertexCount) verts · \(mesh.indices.count / 3) tris")
                         }
+                        // Selectable object list
+                        ForEach(Array(engine.objectNames.enumerated()), id: \.offset) { idx, name in
+                            Button {
+                                engine.selectedObjectIndex = idx
+                                status = "Selected \(name)"
+                            } label: {
+                                HStack {
+                                    Image(systemName: engine.selectedObjectIndex == idx
+                                          ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(OrcaTheme.accent)
+                                    Text(name)
+                                        .foregroundStyle(OrcaTheme.text)
+                                    Spacer()
+                                }
+                            }
+                            .listRowBackground(OrcaTheme.panel)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    engine.deleteObject(at: idx)
+                                    status = engine.lastMessage
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                Button {
+                                    engine.duplicateObject(at: idx)
+                                    status = engine.lastMessage
+                                } label: {
+                                    Label("Duplicate", systemImage: "plus.square.on.square")
+                                }
+                                .tint(OrcaTheme.accent)
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            Button("Duplicate selected") {
+                                engine.duplicateSelected()
+                                status = engine.lastMessage
+                            }
+                            .disabled(engine.selectedObjectIndex < 0)
+                            Spacer()
+                            Button("Delete selected", role: .destructive) {
+                                engine.deleteSelected()
+                                status = engine.lastMessage
+                            }
+                            .disabled(engine.selectedObjectIndex < 0)
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .listRowBackground(OrcaTheme.panel)
                     } else {
                         Text("No model loaded")
                             .foregroundStyle(OrcaTheme.muted)
@@ -820,23 +873,31 @@ struct OrcaRootView: View {
                 }
                 Section {
                     processField(title: "layer_height", unit: "mm", text: $layerHeight) {
-                        engine.setOption("layer_height", value: layerHeight)
+                        engine.setOptionScalar("layer_height", value: layerHeight)
                         status = engine.lastMessage
                     }
                     processField(title: "wall_loops", unit: "", text: $walls) {
-                        engine.setOption("wall_loops", value: walls)
+                        engine.setOptionScalar("wall_loops", value: walls)
                         status = engine.lastMessage
                     }
                     processField(title: "sparse_infill_density", unit: "%", text: $infill) {
-                        engine.setOption("sparse_infill_density", value: "\(infill)%")
+                        engine.setOptionPercent("sparse_infill_density", value: infill)
+                        status = engine.lastMessage
+                    }
+                    enumPicker(
+                        title: "sparse_infill_pattern",
+                        selection: $infillPattern,
+                        choices: ProcessOptionCatalog.infillPattern
+                    ) { key in
+                        engine.setOptionScalar("sparse_infill_pattern", value: key)
                         status = engine.lastMessage
                     }
                     processField(title: "top_shell_layers", unit: "", text: $topShells) {
-                        engine.setOption("top_shell_layers", value: topShells)
+                        engine.setOptionScalar("top_shell_layers", value: topShells)
                         status = engine.lastMessage
                     }
                     processField(title: "bottom_shell_layers", unit: "", text: $bottomShells) {
-                        engine.setOption("bottom_shell_layers", value: bottomShells)
+                        engine.setOptionScalar("bottom_shell_layers", value: bottomShells)
                         status = engine.lastMessage
                     }
                 } header: {
@@ -850,23 +911,43 @@ struct OrcaRootView: View {
                     .tint(OrcaTheme.accent)
                     .listRowBackground(OrcaTheme.panel)
                     .onChange(of: supportOn) { on in
-                        engine.setOption("enable_support", value: on ? "1" : "0")
+                        engine.setOptionBool("enable_support", value: on)
                         status = engine.lastMessage
                     }
-                    processField(title: "brim_type", unit: "", text: $brimType) {
-                        engine.setOption("brim_type", value: brimType)
+                    if supportOn {
+                        enumPicker(
+                            title: "support_type",
+                            selection: $supportType,
+                            choices: ProcessOptionCatalog.supportType
+                        ) { key in
+                            engine.setOptionScalar("support_type", value: key)
+                            status = engine.lastMessage
+                        }
+                    }
+                    enumPicker(
+                        title: "brim_type",
+                        selection: $brimType,
+                        choices: ProcessOptionCatalog.brimType
+                    ) { key in
+                        engine.setOptionScalar("brim_type", value: key)
                         status = engine.lastMessage
+                    }
+                    if brimType != "no_brim" && brimType != "auto_brim" && brimType != "painted" {
+                        processField(title: "brim_width", unit: "mm", text: $brimWidth) {
+                            engine.setOptionScalar("brim_width", value: brimWidth)
+                            status = engine.lastMessage
+                        }
                     }
                 } header: {
                     Text("Support / brim")
                 }
                 Section {
                     processField(title: "outer_wall_speed", unit: "mm/s", text: $outerWallSpeed) {
-                        engine.setOption("outer_wall_speed", value: outerWallSpeed)
+                        engine.setOptionScalar("outer_wall_speed", value: outerWallSpeed)
                         status = engine.lastMessage
                     }
                     processField(title: "sparse_infill_speed", unit: "mm/s", text: $sparseSpeed) {
-                        engine.setOption("sparse_infill_speed", value: sparseSpeed)
+                        engine.setOptionScalar("sparse_infill_speed", value: sparseSpeed)
                         status = engine.lastMessage
                     }
                 } header: {
@@ -874,55 +955,50 @@ struct OrcaRootView: View {
                 }
                 Section {
                     processField(title: "nozzle_temperature", unit: "°C", text: $nozzleTemp) {
-                        engine.setOption("nozzle_temperature", value: nozzleTemp)
-                        engine.setOption("nozzle_temperature_initial_layer", value: nozzleTemp)
+                        // Multi-extruder options accept a single value or comma list
+                        engine.setOptionScalar("nozzle_temperature", value: nozzleTemp)
+                        engine.setOptionScalar("nozzle_temperature_initial_layer", value: nozzleTemp)
                         status = engine.lastMessage
                     }
                     processField(title: "bed_temperature", unit: "°C", text: $bedTemp) {
-                        engine.setOption("bed_temperature", value: bedTemp)
-                        engine.setOption("bed_temperature_initial_layer", value: bedTemp)
+                        // Orca may use bed_temperature or hot_plate_temp depending on machine
+                        engine.setOptionScalar("bed_temperature", value: bedTemp)
+                        engine.setOptionScalar("bed_temperature_initial_layer", value: bedTemp)
+                        engine.setOptionScalar("hot_plate_temp", value: bedTemp)
+                        engine.setOptionScalar("hot_plate_temp_initial_layer", value: bedTemp)
                         status = engine.lastMessage
                     }
-                    processField(title: "filament_diameter", unit: "mm", text: .constant("1.75")) {
-                        engine.setOption("filament_diameter", value: "1.75")
+                    processField(title: "filament_diameter", unit: "mm", text: $filamentDiameter) {
+                        engine.setOptionScalar("filament_diameter", value: filamentDiameter)
                         status = engine.lastMessage
                     }
                 } header: {
                     Text("Filament / temps")
                 }
                 Section {
-                    Button {
-                        engine.setOption("wall_generator", value: "arachne")
+                    enumPicker(
+                        title: "wall_generator",
+                        selection: $wallGenerator,
+                        choices: ProcessOptionCatalog.wallGenerator
+                    ) { key in
+                        engine.setOptionScalar("wall_generator", value: key)
                         status = engine.lastMessage
-                    } label: {
-                        labeled("wall_generator", "Set Arachne")
                     }
-                    Button {
-                        engine.setOption("wall_generator", value: "classic")
+                    enumPicker(
+                        title: "seam_position",
+                        selection: $seamPosition,
+                        choices: ProcessOptionCatalog.seamPosition
+                    ) { key in
+                        engine.setOptionScalar("seam_position", value: key)
                         status = engine.lastMessage
-                    } label: {
-                        labeled("wall_generator", "Set classic")
                     }
-                    Button {
-                        engine.setOption("seam_position", value: "aligned")
-                        status = engine.lastMessage
-                    } label: {
-                        labeled("seam_position", "aligned")
-                    }
-                    Button {
-                        engine.setOption("seam_position", value: "nearest")
-                        status = engine.lastMessage
-                    } label: {
-                        labeled("seam_position", "nearest")
-                    }
-                    Toggle(isOn: $ironingOn) {
-                        Text("ironing")
-                            .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    }
-                    .tint(OrcaTheme.accent)
-                    .listRowBackground(OrcaTheme.panel)
-                    .onChange(of: ironingOn) { on in
-                        engine.setOption("ironing", value: on ? "1" : "0")
+                    enumPicker(
+                        title: "ironing_type",
+                        selection: $ironingType,
+                        choices: ProcessOptionCatalog.ironingType
+                    ) { key in
+                        // Official key is ironing_type (not a bool "ironing")
+                        engine.setOptionScalar("ironing_type", value: key)
                         status = engine.lastMessage
                     }
                 } header: {
@@ -1107,24 +1183,81 @@ struct OrcaRootView: View {
 
     /// Pull key process options into sheet fields after profile load / open.
     private func syncProcessFieldsFromEngine() {
-        if let v = engine.getOption("layer_height") { layerHeight = v }
-        if let v = engine.getOption("wall_loops") { walls = v }
-        if let v = engine.getOption("sparse_infill_density") {
-            infill = v.replacingOccurrences(of: "%", with: "")
+        if let v = engine.getOptionFirst("layer_height") { layerHeight = v }
+        if let v = engine.getOptionFirst("wall_loops") { walls = v }
+        if let v = engine.getOptionPercent("sparse_infill_density") { infill = v }
+        if let v = engine.getOptionFirst("top_shell_layers") { topShells = v }
+        if let v = engine.getOptionFirst("bottom_shell_layers") { bottomShells = v }
+        if let v = engine.getOptionFirst("brim_width") { brimWidth = v }
+        if let v = engine.getOptionFirst("outer_wall_speed") { outerWallSpeed = v }
+        if let v = engine.getOptionFirst("sparse_infill_speed") { sparseSpeed = v }
+        supportOn = engine.getOptionBool("enable_support")
+        brimType = ProcessOptionCatalog.match(
+            engine.getOptionFirst("brim_type"),
+            in: ProcessOptionCatalog.brimType,
+            fallback: "auto_brim"
+        )
+        supportType = ProcessOptionCatalog.match(
+            engine.getOptionFirst("support_type"),
+            in: ProcessOptionCatalog.supportType,
+            fallback: "normal(auto)"
+        )
+        wallGenerator = ProcessOptionCatalog.match(
+            engine.getOptionFirst("wall_generator"),
+            in: ProcessOptionCatalog.wallGenerator,
+            fallback: "arachne"
+        )
+        seamPosition = ProcessOptionCatalog.match(
+            engine.getOptionFirst("seam_position"),
+            in: ProcessOptionCatalog.seamPosition,
+            fallback: "aligned"
+        )
+        ironingType = ProcessOptionCatalog.match(
+            engine.getOptionFirst("ironing_type"),
+            in: ProcessOptionCatalog.ironingType,
+            fallback: "no ironing"
+        )
+        infillPattern = ProcessOptionCatalog.match(
+            engine.getOptionFirst("sparse_infill_pattern"),
+            in: ProcessOptionCatalog.infillPattern,
+            fallback: "grid"
+        )
+        if let v = engine.getOptionFirst("nozzle_temperature") { nozzleTemp = v }
+        // Bed temp: try both legacy and Bambu-style keys
+        if let v = engine.getOptionFirst("bed_temperature") ?? engine.getOptionFirst("hot_plate_temp") {
+            bedTemp = v
         }
-        if let v = engine.getOption("top_shell_layers") { topShells = v }
-        if let v = engine.getOption("bottom_shell_layers") { bottomShells = v }
-        if let v = engine.getOption("brim_type") { brimType = v }
-        if let v = engine.getOption("outer_wall_speed") { outerWallSpeed = v }
-        if let v = engine.getOption("sparse_infill_speed") { sparseSpeed = v }
-        if let v = engine.getOption("enable_support") {
-            supportOn = (v == "1" || v.lowercased() == "true")
+        if let v = engine.getOptionFirst("filament_diameter") { filamentDiameter = v }
+    }
+
+    /// Official enum dropdown (Picker) for process options like brim_type.
+    private func enumPicker(
+        title: String,
+        selection: Binding<String>,
+        choices: [ProcessEnumChoice],
+        onChange: @escaping (String) -> Void
+    ) -> some View {
+        // Write-through binding so pickers apply immediately without fragile onChange paths
+        let live = Binding<String>(
+            get: { selection.wrappedValue },
+            set: { newVal in
+                selection.wrappedValue = newVal
+                onChange(newVal)
+            }
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .foregroundStyle(OrcaTheme.muted)
+            Picker(title, selection: live) {
+                ForEach(choices) { c in
+                    Text(c.label).tag(c.key)
+                }
+            }
+            .pickerStyle(.menu)
+            .tint(OrcaTheme.accent)
         }
-        if let v = engine.getOption("ironing") {
-            ironingOn = (v == "1" || v.lowercased() == "true")
-        }
-        if let v = engine.getOption("nozzle_temperature") { nozzleTemp = v }
-        if let v = engine.getOption("bed_temperature") { bedTemp = v }
+        .listRowBackground(OrcaTheme.panel)
     }
 
     private func labeled(_ title: String, _ value: String) -> some View {

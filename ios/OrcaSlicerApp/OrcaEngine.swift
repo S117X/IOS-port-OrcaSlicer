@@ -696,11 +696,10 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    func duplicateSelected() {
+    func duplicateObject(at index: Int) {
         #if ORCA_LINKED
-        guard let s = session, hasModel else { return }
-        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
-        let rc = orca_session_duplicate_object(s, Int32(idx))
+        guard let s = session, hasModel, index >= 0 else { return }
+        let rc = orca_session_duplicate_object(s, Int32(index))
         if rc >= 0 {
             hasModel = true
             refreshObjectList()
@@ -713,11 +712,15 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    func deleteSelected() {
-        #if ORCA_LINKED
-        guard let s = session, hasModel else { return }
+    func duplicateSelected() {
         let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
-        let rc = orca_session_delete_object(s, Int32(idx))
+        duplicateObject(at: idx)
+    }
+
+    func deleteObject(at index: Int) {
+        #if ORCA_LINKED
+        guard let s = session, hasModel, index >= 0 else { return }
+        let rc = orca_session_delete_object(s, Int32(index))
         if rc == 0 {
             let n = Int(orca_session_object_count(s))
             hasModel = n > 0
@@ -727,16 +730,25 @@ final class OrcaEngine: ObservableObject {
                 objectNames = []
                 objectCount = 0
                 modelVolumeMm3 = 0
+                selectedObjectIndex = -1
                 lastMessage = "Plate empty"
             } else {
+                if selectedObjectIndex >= n {
+                    selectedObjectIndex = n - 1
+                }
                 refreshObjectList()
                 refreshMesh(); refreshBounds(); refreshModelInfo()
-                lastMessage = "Deleted object \(idx)"
+                lastMessage = "Deleted object \(index)"
             }
         } else {
             lastMessage = orca_session_last_error(s).map { String(cString: $0) } ?? "delete failed"
         }
         #endif
+    }
+
+    func deleteSelected() {
+        let idx = selectedObjectIndex >= 0 ? selectedObjectIndex : 0
+        deleteObject(at: idx)
     }
 
     func clearPlate() {

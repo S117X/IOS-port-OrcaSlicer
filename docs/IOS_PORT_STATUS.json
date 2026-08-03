@@ -1,0 +1,17 @@
+{
+  "status": "in_progress",
+  "updated": "2026-08-02T23:15:00Z",
+  "branch": "ios-port",
+  "last_focus": "process enum dropdowns (brim_type, support, ironing_type, seam, wall_generator)",
+  "gates": {
+    "G1_engine_build": true,
+    "G2_profiles": false,
+    "G3_process_ui": false,
+    "G4_prepare_objects": false,
+    "G5_preview": false,
+    "G6_device": false,
+    "G7_project": false,
+    "G8_quality": false
+  },
+  "notes": "Process sheet now uses official enum pickers. Remaining: object list, libnest2d arrange, open 3MF, Moonraker start/status, full settings browser, compatible filter."
+}

@@ -24,7 +24,7 @@ def uid():
 
 IDs = {k: uid() for k in [
     "project", "target", "sources", "resources", "frameworks", "product",
-    "swift_app", "swift_engine", "swift_plate", "logo", "assets",
+    "swift_app", "swift_engine", "swift_plate", "swift_process", "logo", "assets",
     "process_profile", "process_profile_fine", "profiles_folder", "scenekit_fw",
     "config_list_proj", "config_list_tgt",
     "debug_proj", "release_proj", "debug_tgt", "release_tgt",
@@ -166,6 +166,7 @@ pbx = f'''// !$*UTF8*$!
 		{IDs["swift_app"]} /* OrcaSlicerApp.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OrcaSlicerApp.swift */; }};
 		{IDs["swift_engine"]} /* OrcaEngine.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000002 /* OrcaEngine.swift */; }};
 		{IDs["swift_plate"]} /* PlateSceneView.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PlateSceneView.swift */; }};
+		{IDs["swift_process"]} /* ProcessOptions.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A1000000000000000000000C /* ProcessOptions.swift */; }};
 		{IDs["logo"]} /* OrcaSlicerLogo.png in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000006 /* OrcaSlicerLogo.png */; }};
 		{IDs["assets"]} /* Assets.xcassets in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; }};
 		{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; }};
@@ -181,6 +182,7 @@ pbx = f'''// !$*UTF8*$!
 		A10000000000000000000006 /* OrcaSlicerLogo.png */ = {{isa = PBXFileReference; lastKnownFileType = image.png; path = OrcaSlicerLogo.png; sourceTree = "<group>"; }};
 		A10000000000000000000007 /* Assets.xcassets */ = {{isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; }};
 		A10000000000000000000008 /* PlateSceneView.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateSceneView.swift; sourceTree = "<group>"; }};
+		A1000000000000000000000C /* ProcessOptions.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessOptions.swift; sourceTree = "<group>"; }};
 		A10000000000000000000009 /* process_0.20mm_Standard.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.20mm_Standard.json; sourceTree = "<group>"; }};
 		A1000000000000000000000A /* process_0.16mm_Fine.json */ = {{isa = PBXFileReference; lastKnownFileType = text.json; path = process_0.16mm_Fine.json; sourceTree = "<group>"; }};
 ''' + ('''		A1000000000000000000000B /* profiles */ = {isa = PBXFileReference; lastKnownFileType = folder; name = profiles; path = Resources/profiles; sourceTree = "<group>"; };
@@ -202,6 +204,7 @@ pbx = f'''// !$*UTF8*$!
 				A10000000000000000000001 /* OrcaSlicerApp.swift */,
 				A10000000000000000000002 /* OrcaEngine.swift */,
 				A10000000000000000000008 /* PlateSceneView.swift */,
+				A1000000000000000000000C /* ProcessOptions.swift */,
 				A10000000000000000000003 /* Info.plist */,
 				A10000000000000000000004 /* Bridging-Header.h */,
 				A10000000000000000000006 /* OrcaSlicerLogo.png */,
@@ -302,6 +305,7 @@ pbx = f'''// !$*UTF8*$!
 				{IDs["swift_app"]} /* OrcaSlicerApp.swift in Sources */,
 				{IDs["swift_engine"]} /* OrcaEngine.swift in Sources */,
 				{IDs["swift_plate"]} /* PlateSceneView.swift in Sources */,
+				{IDs["swift_process"]} /* ProcessOptions.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
