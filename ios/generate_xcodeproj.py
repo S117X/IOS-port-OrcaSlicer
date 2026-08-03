@@ -24,7 +24,7 @@ def uid():
 
 IDs = {k: uid() for k in [
     "project", "target", "sources", "resources", "frameworks", "product",
-    "swift_app", "swift_engine", "swift_plate", "sample_stl", "logo", "assets",
+    "swift_app", "swift_engine", "swift_plate", "logo", "assets",
     "process_profile", "process_profile_fine", "scenekit_fw",
     "config_list_proj", "config_list_tgt",
     "debug_proj", "release_proj", "debug_tgt", "release_tgt",
@@ -162,7 +162,6 @@ pbx = f'''// !$*UTF8*$!
 		{IDs["swift_app"]} /* OrcaSlicerApp.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OrcaSlicerApp.swift */; }};
 		{IDs["swift_engine"]} /* OrcaEngine.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000002 /* OrcaEngine.swift */; }};
 		{IDs["swift_plate"]} /* PlateSceneView.swift in Sources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000008 /* PlateSceneView.swift */; }};
-		{IDs["sample_stl"]} /* sample_cube_20mm.stl in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000005 /* sample_cube_20mm.stl */; }};
 		{IDs["logo"]} /* OrcaSlicerLogo.png in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000006 /* OrcaSlicerLogo.png */; }};
 		{IDs["assets"]} /* Assets.xcassets in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000007 /* Assets.xcassets */; }};
 		{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */ = {{isa = PBXBuildFile; fileRef = A10000000000000000000009 /* process_0.20mm_Standard.json */; }};
@@ -174,7 +173,6 @@ pbx = f'''// !$*UTF8*$!
 		A10000000000000000000002 /* OrcaEngine.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrcaEngine.swift; sourceTree = "<group>"; }};
 		A10000000000000000000003 /* Info.plist */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; }};
 		A10000000000000000000004 /* Bridging-Header.h */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Bridging-Header.h"; sourceTree = "<group>"; }};
-		A10000000000000000000005 /* sample_cube_20mm.stl */ = {{isa = PBXFileReference; lastKnownFileType = text; name = sample_cube_20mm.stl; path = sample_cube_20mm.stl; sourceTree = "<group>"; }};
 		A10000000000000000000006 /* OrcaSlicerLogo.png */ = {{isa = PBXFileReference; lastKnownFileType = image.png; path = OrcaSlicerLogo.png; sourceTree = "<group>"; }};
 		A10000000000000000000007 /* Assets.xcassets */ = {{isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; }};
 		A10000000000000000000008 /* PlateSceneView.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlateSceneView.swift; sourceTree = "<group>"; }};
@@ -188,7 +186,6 @@ pbx = f'''// !$*UTF8*$!
 			isa = PBXGroup;
 			children = (
 				{IDs["group_app"]},
-				A10000000000000000000005 /* sample_cube_20mm.stl */,
 				{IDs["group_products"]},
 			);
 			sourceTree = "<group>";
@@ -270,7 +267,6 @@ pbx = f'''// !$*UTF8*$!
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				{IDs["sample_stl"]} /* sample_cube_20mm.stl in Resources */,
 				{IDs["logo"]} /* OrcaSlicerLogo.png in Resources */,
 				{IDs["assets"]} /* Assets.xcassets in Resources */,
 				{IDs["process_profile"]} /* process_0.20mm_Standard.json in Resources */,

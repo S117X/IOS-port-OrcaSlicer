@@ -46,10 +46,9 @@ struct OrcaRootView: View {
     @State private var layerHeight = "0.20"
     @State private var infill = "15"
     @State private var walls = "2"
-    @State private var status = "Drag to orbit · pinch to zoom · load a model then Slice."
+    @State private var status = "Open or Add a model · drag to orbit · pinch to zoom · Slice."
     @State private var isSlicing = false
     @State private var mainTab: MainTab = .prepare
-    @State private var didAutoSample = false
 
     enum MainTab: String, CaseIterable {
         case prepare = "Prepare"
@@ -104,14 +103,6 @@ struct OrcaRootView: View {
             allowedContentTypes: modelTypes,
             allowsMultipleSelection: false
         ) { handleImport($0) }
-        .onAppear {
-            // Demo: load sample cube so plate shows real libslic3r mesh immediately
-            guard !didAutoSample, !engine.hasModel else { return }
-            didAutoSample = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                status = engine.loadBundledSampleCube()
-            }
-        }
     }
 
     private var headerBar: some View {
@@ -410,10 +401,6 @@ struct OrcaRootView: View {
                 actionButton(title: "Add", systemImage: "plus.rectangle.on.folder") {
                     importAppend = true
                     showImporter = true
-                }
-                actionButton(title: "Sample", systemImage: "cube.fill") {
-                    status = engine.loadBundledSampleCube()
-                    mainTab = .prepare
                 }
                 actionButton(title: "Process", systemImage: "slider.horizontal.3") {
                     showProcess = true

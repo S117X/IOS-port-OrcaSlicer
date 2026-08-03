@@ -207,14 +207,6 @@ final class OrcaEngine: ObservableObject {
         #endif
     }
 
-    func loadBundledSampleCube() -> String {
-        if let url = Bundle.main.url(forResource: "sample_cube_20mm", withExtension: "stl") {
-            return loadModel(url: url)
-        }
-        lastMessage = "sample_cube_20mm.stl not in bundle"
-        return lastMessage
-    }
-
     /// Copy security-scoped URL into temp for the C engine.
     private func copyToTemp(_ url: URL) -> URL? {
         let dest = FileManager.default.temporaryDirectory

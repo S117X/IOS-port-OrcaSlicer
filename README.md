@@ -69,7 +69,6 @@ ios/                         SwiftUI host + Xcode project
     OrcaSlicerApp.swift      Prepare / Preview / Device shell
     OrcaEngine.swift         Bridge to orca_ios_api
     PlateSceneView.swift     SceneKit bed + mesh + G-code paths
-  sample_cube_20mm.stl       Bundled test model
 src/ios/                     C ABI over libslic3r (+ CLI for host tests)
   orca_slice_c_api.{h,cpp}   load / config / mesh / slice / G-code
 scripts/
